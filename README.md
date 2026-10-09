@@ -1,125 +1,70 @@
-# DEFINE 4.0
+# EventReach
 
-The official project submission repository for **DEFINE 4.0 — The World's Realest Hackathon**.
+A multilingual voice-first outreach platform. An organizer uploads a poster, a voice note and a contact list. EventReach turns them into a live calling campaign (Exotel), with email, WhatsApp and social posts alongside, and shows RSVPs by campaign, language and segment.
 
----
+## What is in this repository
 
-# < Project Name >
+```
+eventreach/
+  api/        FastAPI backend (mock API today, real logic replaces it step by step)
+  web/        Frontend (generated from Figma designs, see web/README.md)
+  db/         schema.sql, the PostgreSQL tables
+  docs/       data-model.md, api-contract.md, openapi.json
+  .env.example
+```
 
-<!-- Add your project cover image below -->
+## Run the mock API
 
-![Project Cover](./assets/cover.png)
-
-## Team Information
-
-- **Team Name**:
-- **Track**:
-
-## Team Members
-
-| Name | Role | GitHub | LinkedIn |
-|------|------|--------|----------|
-| Full Name | Role | [@username](https://github.com/username) | [Profile](https://linkedin.com/in/username) |
-| Full Name | Role | [@username](https://github.com/username) | [Profile](https://linkedin.com/in/username) |
-| Full Name | Role | [@username](https://github.com/username) | [Profile](https://linkedin.com/in/username) |
-| Full Name | Role | [@username](https://github.com/username) | [Profile](https://linkedin.com/in/username) |
-
----
-
-# Project Details
-
-## Overview
-
-Write a concise 2–3 sentence summary of your project, what it does, and the primary problem it addresses.
-
-## Problem Statement
-
-Describe the problem your project aims to solve.
-
-Explain:
-
-- What is the problem?
-- Who is affected by it?
-- Why is solving it important?
-- What are the limitations of existing solutions?
-
-## Solution
-
-Explain your proposed solution and how it addresses the identified problem.
-
-Describe the core idea, workflow, and key technologies used to build the solution.
-
----
-
-# Demo
-
-### Demo Video
-
-[Watch Project Demo](https://www.youtube.com/watch?v=VIDEO_ID)
-
-> Replace `VIDEO_ID` with your YouTube video ID.
-
-### Screenshots
-
-<!-- Add screenshots of your project here -->
-
-![Screenshot 1](./assets/screenshot-1.png)
-
-![Screenshot 2](./assets/screenshot-2.png)
-
-![Screenshot 3](./assets/screenshot-3.png)
-
----
-
-# Live Project
-
-[Visit Live Project](https://your-project-url.com/)
-
----
-
-# Technical Implementation
-
-## Technologies Used
-
-| Category | Technologies |
-|----------|--------------|
-| **Frontend** | Technologies |
-| **Backend** | Technologies |
-| **Database** | Technologies |
-| **APIs / Services** | Technologies |
-| **AI / ML** | Technologies |
-| **DevOps / Deployment** | Technologies |
-| **Other Tools** | Technologies |
-
-## System Architecture
-
-<!-- Add your architecture diagram here -->
-
-![System Architecture](./assets/architecture.png)
-
-## Key Features
-
-- Feature 1
-- Feature 2
-- Feature 3
-- Feature 4
-- Feature 5
-
----
-
-# Setup Instructions
-
-## Prerequisites
-
-Make sure the following are installed before running the project:
-
-- Requirement 1
-- Requirement 2
-- Requirement 3
-
-## Installation
-
-### 1. Clone the Repository
+You need Python 3.10 or newer.
 
 ```bash
-git clone <repository-url>
+cd api
+python -m venv .venv
+source .venv/bin/activate        # on Windows: .venv\Scripts\activate
+pip install -r requirements-dev.txt
+uvicorn app.main:app --reload --port 8000
+```
+
+Open http://localhost:8000/docs to try every endpoint. It returns realistic sample data: one running campaign with 14 contacts in English, Hindi, Malayalam and Tamil, and one draft campaign.
+
+Run the tests:
+
+```bash
+cd api
+pytest
+```
+
+Regenerate the OpenAPI file after changing `api/app/schemas.py`:
+
+```bash
+cd api
+python scripts/export_openapi.py
+```
+
+## How the pieces fit
+
+- `api/app/schemas.py` defines the contract. Frontend and the Figma annotations use the same field names.
+- `api/app/main.py` is the mock. Replace a handler with real logic when it is ready, keeping the same schema.
+- `db/schema.sql` is the real database. `docs/data-model.md` explains it.
+- Phone numbers are stored encrypted and hashed, and the API only returns masked numbers.
+
+## Who owns what
+
+| Area | Owner |
+|---|---|
+| Data model, auth, CSV import, voice note extraction, translation, templates, registration, payments, email and social channels | B2 |
+| Exotel calls, keypad and speech capture, voicemail, dispatcher, retries, analytics | B1 |
+| Organizer flow and design system | F1 |
+| Dashboard | F2 |
+| Registration page, message layouts, call-script copy | F3 |
+
+## Next steps for B2
+
+1. ~~PostgreSQL and login~~ Done: see `docs/database-setup-windows.md`. Next: move campaigns, then contacts, onto the database one endpoint at a time, and require sign-in on the organizer endpoints with the `current_organizer` dependency in `api/app/auth.py`.
+2. ~~Real CSV import~~ Done: see `docs/csv-format.md`, `api/app/csv_import.py` and the sample files in `docs/samples/`. It currently stores people in memory. Moving it to PostgreSQL means replacing `add_imported_contacts` in `api/app/mock_data.py` and adding the encrypted phone column.
+3. Private storage for posters and voice notes with signed links.
+4. Voice note pipeline: transcribe, extract event JSON, return an `EventDraft`.
+5. Translation with back-translation, then the template engine and the four preset seeds.
+6. Registration with personal tokens, then email, then payments in test mode.
+
+Keep the mock endpoints working while you replace them, so the frontend is never blocked.

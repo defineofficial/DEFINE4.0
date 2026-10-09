@@ -1,0 +1,2439 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "EventReach API (mock)",
+    "description": "Mock API with sample data. Auth is not enforced yet. Full phone numbers are never returned.",
+    "version": "0.1.0"
+  },
+  "paths": {
+    "/health": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Health",
+        "description": "Reports whether the API is up and whether the database is connected.\n\nCampaign, contact and analytics data are still mock until each endpoint moves to the database.",
+        "operationId": "health_health_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/register": {
+      "post": {
+        "tags": [
+          "Auth"
+        ],
+        "summary": "Register",
+        "description": "Create an organizer account and sign in. Set ALLOW_REGISTRATION=false to close sign-up.",
+        "operationId": "register_auth_register_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OrganizerSignup"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Token"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/login": {
+      "post": {
+        "tags": [
+          "Auth"
+        ],
+        "summary": "Login",
+        "operationId": "login_auth_login_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LoginRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Token"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/me": {
+      "get": {
+        "tags": [
+          "Auth"
+        ],
+        "summary": "Me",
+        "operationId": "me_me_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Me"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
+    "/templates": {
+      "get": {
+        "tags": [
+          "Templates"
+        ],
+        "summary": "Templates",
+        "operationId": "templates_templates_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/Template"
+                  },
+                  "type": "array",
+                  "title": "Response Templates Templates Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/campaigns": {
+      "get": {
+        "tags": [
+          "Campaigns"
+        ],
+        "summary": "List Campaigns",
+        "operationId": "list_campaigns_campaigns_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/Campaign"
+                  },
+                  "type": "array",
+                  "title": "Response List Campaigns Campaigns Get"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Campaigns"
+        ],
+        "summary": "Create Campaign",
+        "operationId": "create_campaign_campaigns_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CampaignCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Campaign"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/campaigns/{campaign_id}": {
+      "get": {
+        "tags": [
+          "Campaigns"
+        ],
+        "summary": "Get Campaign",
+        "operationId": "get_campaign_campaigns__campaign_id__get",
+        "parameters": [
+          {
+            "name": "campaign_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Campaign Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Campaign"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/campaigns/{campaign_id}/event": {
+      "put": {
+        "tags": [
+          "Campaigns"
+        ],
+        "summary": "Save Event",
+        "operationId": "save_event_campaigns__campaign_id__event_put",
+        "parameters": [
+          {
+            "name": "campaign_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Campaign Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EventDetails"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Campaign"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/campaigns/{campaign_id}/poster": {
+      "post": {
+        "tags": [
+          "Campaigns"
+        ],
+        "summary": "Upload Poster",
+        "operationId": "upload_poster_campaigns__campaign_id__poster_post",
+        "parameters": [
+          {
+            "name": "campaign_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Campaign Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_upload_poster_campaigns__campaign_id__poster_post"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PosterResult"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/campaigns/{campaign_id}/voice-note": {
+      "post": {
+        "tags": [
+          "Campaigns"
+        ],
+        "summary": "Upload Voice Note",
+        "description": "Mock: ignores the audio and returns a fixed draft. Real version transcribes then extracts.",
+        "operationId": "upload_voice_note_campaigns__campaign_id__voice_note_post",
+        "parameters": [
+          {
+            "name": "campaign_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Campaign Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_upload_voice_note_campaigns__campaign_id__voice_note_post"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EventDraft"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/audience/template.csv": {
+      "get": {
+        "tags": [
+          "Audience"
+        ],
+        "summary": "Audience Template",
+        "description": "A starter file the organizer can download, fill in and upload.",
+        "operationId": "audience_template_audience_template_csv_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/campaigns/{campaign_id}/audience": {
+      "post": {
+        "tags": [
+          "Audience"
+        ],
+        "summary": "Import Audience",
+        "description": "Real import. Validates every row, skips bad ones, and adds the rest to the campaign.\n\nUploading again adds only people who are not in the campaign yet.\nNumbers that opted out in any campaign are skipped.",
+        "operationId": "import_audience_campaigns__campaign_id__audience_post",
+        "parameters": [
+          {
+            "name": "campaign_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Campaign Id"
+            }
+          },
+          {
+            "name": "default_language",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/Language",
+              "description": "Used when a row has no language or an unsupported one",
+              "default": "en"
+            },
+            "description": "Used when a row has no language or an unsupported one"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_import_audience_campaigns__campaign_id__audience_post"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImportReport"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/campaigns/{campaign_id}/contacts": {
+      "get": {
+        "tags": [
+          "Audience"
+        ],
+        "summary": "List Contacts",
+        "operationId": "list_contacts_campaigns__campaign_id__contacts_get",
+        "parameters": [
+          {
+            "name": "campaign_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Campaign Id"
+            }
+          },
+          {
+            "name": "language",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/Language"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Language"
+            }
+          },
+          {
+            "name": "segment",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Segment"
+            }
+          },
+          {
+            "name": "outcome",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/Outcome"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Outcome"
+            }
+          },
+          {
+            "name": "stage",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/Stage"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Stage"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 200,
+              "minimum": 1,
+              "default": 50,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0,
+              "title": "Offset"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContactPage"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/contacts/{contact_id}/opt-out": {
+      "post": {
+        "tags": [
+          "Audience"
+        ],
+        "summary": "Opt Out",
+        "operationId": "opt_out_contacts__contact_id__opt_out_post",
+        "parameters": [
+          {
+            "name": "contact_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Contact Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Contact"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/campaigns/{campaign_id}/translations": {
+      "get": {
+        "tags": [
+          "Translations"
+        ],
+        "summary": "List Translations",
+        "operationId": "list_translations_campaigns__campaign_id__translations_get",
+        "parameters": [
+          {
+            "name": "campaign_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Campaign Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Translation"
+                  },
+                  "title": "Response List Translations Campaigns  Campaign Id  Translations Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/campaigns/{campaign_id}/translations/{language}": {
+      "put": {
+        "tags": [
+          "Translations"
+        ],
+        "summary": "Save Translation",
+        "operationId": "save_translation_campaigns__campaign_id__translations__language__put",
+        "parameters": [
+          {
+            "name": "campaign_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Campaign Id"
+            }
+          },
+          {
+            "name": "language",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Language"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Translation"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Translation"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/campaigns/{campaign_id}/test-call": {
+      "post": {
+        "tags": [
+          "Dispatch (B1)"
+        ],
+        "summary": "Test Call",
+        "operationId": "test_call_campaigns__campaign_id__test_call_post",
+        "parameters": [
+          {
+            "name": "campaign_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Campaign Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TestCallRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TestCallResult"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/campaigns/{campaign_id}/launch": {
+      "post": {
+        "tags": [
+          "Dispatch (B1)"
+        ],
+        "summary": "Launch",
+        "operationId": "launch_campaigns__campaign_id__launch_post",
+        "parameters": [
+          {
+            "name": "campaign_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Campaign Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LaunchResult"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/campaigns/{campaign_id}/retry": {
+      "post": {
+        "tags": [
+          "Dispatch (B1)"
+        ],
+        "summary": "Retry",
+        "operationId": "retry_campaigns__campaign_id__retry_post",
+        "parameters": [
+          {
+            "name": "campaign_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Campaign Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RetryRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RetryResult"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/campaigns/{campaign_id}/analytics/funnel": {
+      "get": {
+        "tags": [
+          "Analytics (B1)"
+        ],
+        "summary": "Funnel",
+        "operationId": "funnel_campaigns__campaign_id__analytics_funnel_get",
+        "parameters": [
+          {
+            "name": "campaign_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Campaign Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Funnel"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/campaigns/{campaign_id}/analytics/by-language": {
+      "get": {
+        "tags": [
+          "Analytics (B1)"
+        ],
+        "summary": "By Language",
+        "operationId": "by_language_campaigns__campaign_id__analytics_by_language_get",
+        "parameters": [
+          {
+            "name": "campaign_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Campaign Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/BreakdownRow"
+                  },
+                  "title": "Response By Language Campaigns  Campaign Id  Analytics By Language Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/campaigns/{campaign_id}/analytics/by-segment": {
+      "get": {
+        "tags": [
+          "Analytics (B1)"
+        ],
+        "summary": "By Segment",
+        "operationId": "by_segment_campaigns__campaign_id__analytics_by_segment_get",
+        "parameters": [
+          {
+            "name": "campaign_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Campaign Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/BreakdownRow"
+                  },
+                  "title": "Response By Segment Campaigns  Campaign Id  Analytics By Segment Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/r/{token}": {
+      "get": {
+        "tags": [
+          "Registration (public)"
+        ],
+        "summary": "Registration Page",
+        "operationId": "registration_page_r__token__get",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RegistrationPage"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/r/{token}/register": {
+      "post": {
+        "tags": [
+          "Registration (public)"
+        ],
+        "summary": "Register",
+        "operationId": "register_r__token__register_post",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RegisterRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RegisterResult"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/r/{token}/pay": {
+      "post": {
+        "tags": [
+          "Registration (public)"
+        ],
+        "summary": "Create Payment",
+        "operationId": "create_payment_r__token__pay_post",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaymentOrder"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/webhooks/payment": {
+      "post": {
+        "tags": [
+          "Registration (public)"
+        ],
+        "summary": "Payment Webhook",
+        "description": "Mock of the gateway callback. The real one must verify the gateway signature first.",
+        "operationId": "payment_webhook_webhooks_payment_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PaymentWebhook"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Payment Webhook Webhooks Payment Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Body_import_audience_campaigns__campaign_id__audience_post": {
+        "properties": {
+          "file": {
+            "type": "string",
+            "contentMediaType": "application/octet-stream",
+            "title": "File"
+          }
+        },
+        "type": "object",
+        "required": [
+          "file"
+        ],
+        "title": "Body_import_audience_campaigns__campaign_id__audience_post"
+      },
+      "Body_upload_poster_campaigns__campaign_id__poster_post": {
+        "properties": {
+          "file": {
+            "type": "string",
+            "contentMediaType": "application/octet-stream",
+            "title": "File"
+          }
+        },
+        "type": "object",
+        "required": [
+          "file"
+        ],
+        "title": "Body_upload_poster_campaigns__campaign_id__poster_post"
+      },
+      "Body_upload_voice_note_campaigns__campaign_id__voice_note_post": {
+        "properties": {
+          "file": {
+            "type": "string",
+            "contentMediaType": "application/octet-stream",
+            "title": "File"
+          }
+        },
+        "type": "object",
+        "required": [
+          "file"
+        ],
+        "title": "Body_upload_voice_note_campaigns__campaign_id__voice_note_post"
+      },
+      "BreakdownRow": {
+        "properties": {
+          "key": {
+            "type": "string",
+            "title": "Key",
+            "description": "Language code or segment name"
+          },
+          "contacts": {
+            "type": "integer",
+            "title": "Contacts"
+          },
+          "dialed": {
+            "type": "integer",
+            "title": "Dialed"
+          },
+          "answered": {
+            "type": "integer",
+            "title": "Answered"
+          },
+          "confirmed": {
+            "type": "integer",
+            "title": "Confirmed"
+          },
+          "declined": {
+            "type": "integer",
+            "title": "Declined"
+          },
+          "callback": {
+            "type": "integer",
+            "title": "Callback"
+          },
+          "opted_out": {
+            "type": "integer",
+            "title": "Opted Out"
+          },
+          "no_response": {
+            "type": "integer",
+            "title": "No Response",
+            "description": "no_answer, voicemail, failed, wrong_number or pending"
+          },
+          "confirmed_rate": {
+            "type": "number",
+            "title": "Confirmed Rate",
+            "description": "confirmed divided by contacts, 0 to 1"
+          }
+        },
+        "type": "object",
+        "required": [
+          "key",
+          "contacts",
+          "dialed",
+          "answered",
+          "confirmed",
+          "declined",
+          "callback",
+          "opted_out",
+          "no_response",
+          "confirmed_rate"
+        ],
+        "title": "BreakdownRow"
+      },
+      "Campaign": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "template_key": {
+            "type": "string",
+            "title": "Template Key"
+          },
+          "status": {
+            "$ref": "#/components/schemas/CampaignStatus"
+          },
+          "event": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EventDetails"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "languages": {
+            "items": {
+              "$ref": "#/components/schemas/Language"
+            },
+            "type": "array",
+            "title": "Languages"
+          },
+          "channels": {
+            "items": {
+              "$ref": "#/components/schemas/Channel"
+            },
+            "type": "array",
+            "title": "Channels"
+          },
+          "poster_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Poster Url"
+          },
+          "contact_count": {
+            "type": "integer",
+            "title": "Contact Count"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "template_key",
+          "status",
+          "languages",
+          "channels",
+          "contact_count",
+          "created_at"
+        ],
+        "title": "Campaign"
+      },
+      "CampaignCreate": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name",
+            "examples": [
+              "AI in Healthcare Seminar"
+            ]
+          },
+          "template_key": {
+            "type": "string",
+            "title": "Template Key",
+            "examples": [
+              "seminar_invite"
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "template_key"
+        ],
+        "title": "CampaignCreate"
+      },
+      "CampaignStatus": {
+        "type": "string",
+        "enum": [
+          "draft",
+          "ready",
+          "running",
+          "completed"
+        ],
+        "title": "CampaignStatus"
+      },
+      "Channel": {
+        "type": "string",
+        "enum": [
+          "call",
+          "sms",
+          "email",
+          "whatsapp",
+          "instagram"
+        ],
+        "title": "Channel"
+      },
+      "Contact": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "phone_masked": {
+            "type": "string",
+            "title": "Phone Masked",
+            "description": "The API never returns a full phone number"
+          },
+          "email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email"
+          },
+          "language": {
+            "$ref": "#/components/schemas/Language"
+          },
+          "segment": {
+            "type": "string",
+            "title": "Segment"
+          },
+          "stage": {
+            "$ref": "#/components/schemas/Stage"
+          },
+          "last_outcome": {
+            "$ref": "#/components/schemas/Outcome"
+          },
+          "attempts": {
+            "type": "integer",
+            "title": "Attempts"
+          },
+          "opted_out": {
+            "type": "boolean",
+            "title": "Opted Out"
+          },
+          "registration_link": {
+            "type": "string",
+            "title": "Registration Link"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "phone_masked",
+          "language",
+          "segment",
+          "stage",
+          "last_outcome",
+          "attempts",
+          "opted_out",
+          "registration_link"
+        ],
+        "title": "Contact"
+      },
+      "ContactPage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/Contact"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items",
+          "total"
+        ],
+        "title": "ContactPage"
+      },
+      "EventDetails": {
+        "properties": {
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "starts_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Starts At"
+          },
+          "ends_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ends At"
+          },
+          "venue": {
+            "type": "string",
+            "title": "Venue"
+          },
+          "city": {
+            "type": "string",
+            "title": "City"
+          },
+          "fee_inr": {
+            "type": "integer",
+            "title": "Fee Inr",
+            "default": 0
+          },
+          "capacity": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Capacity"
+          },
+          "rsvp_deadline": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rsvp Deadline"
+          }
+        },
+        "type": "object",
+        "required": [
+          "title",
+          "starts_at",
+          "venue",
+          "city"
+        ],
+        "title": "EventDetails"
+      },
+      "EventDraft": {
+        "properties": {
+          "transcript": {
+            "type": "string",
+            "title": "Transcript"
+          },
+          "detected_language": {
+            "$ref": "#/components/schemas/Language"
+          },
+          "event": {
+            "$ref": "#/components/schemas/EventDetails"
+          },
+          "needs_review": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Needs Review",
+            "description": "Field names the model was unsure about"
+          }
+        },
+        "type": "object",
+        "required": [
+          "transcript",
+          "detected_language",
+          "event",
+          "needs_review"
+        ],
+        "title": "EventDraft",
+        "description": "Result of voice note transcription and extraction. The organizer reviews it before saving."
+      },
+      "Funnel": {
+        "properties": {
+          "contacts": {
+            "type": "integer",
+            "title": "Contacts"
+          },
+          "dialed": {
+            "type": "integer",
+            "title": "Dialed"
+          },
+          "answered": {
+            "type": "integer",
+            "title": "Answered"
+          },
+          "responded": {
+            "type": "integer",
+            "title": "Responded"
+          },
+          "confirmed": {
+            "type": "integer",
+            "title": "Confirmed"
+          },
+          "registered": {
+            "type": "integer",
+            "title": "Registered"
+          },
+          "paid": {
+            "type": "integer",
+            "title": "Paid"
+          }
+        },
+        "type": "object",
+        "required": [
+          "contacts",
+          "dialed",
+          "answered",
+          "responded",
+          "confirmed",
+          "registered",
+          "paid"
+        ],
+        "title": "Funnel"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "ImportReport": {
+        "properties": {
+          "total_rows": {
+            "type": "integer",
+            "title": "Total Rows"
+          },
+          "imported": {
+            "type": "integer",
+            "title": "Imported"
+          },
+          "skipped": {
+            "type": "integer",
+            "title": "Skipped"
+          },
+          "errors": {
+            "items": {
+              "$ref": "#/components/schemas/RowError"
+            },
+            "type": "array",
+            "title": "Errors",
+            "description": "Rows that were skipped, with the reason"
+          },
+          "warnings": {
+            "items": {
+              "$ref": "#/components/schemas/RowError"
+            },
+            "type": "array",
+            "title": "Warnings",
+            "description": "Rows that were imported but need a look, for example an unsupported language or invalid email"
+          },
+          "languages_found": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "Languages Found"
+          },
+          "segments_found": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "Segments Found"
+          }
+        },
+        "type": "object",
+        "required": [
+          "total_rows",
+          "imported",
+          "skipped",
+          "errors",
+          "languages_found",
+          "segments_found"
+        ],
+        "title": "ImportReport"
+      },
+      "KeypadOption": {
+        "properties": {
+          "digit": {
+            "type": "string",
+            "title": "Digit",
+            "examples": [
+              "1"
+            ]
+          },
+          "label": {
+            "type": "string",
+            "title": "Label",
+            "examples": [
+              "Confirm"
+            ]
+          },
+          "outcome": {
+            "$ref": "#/components/schemas/Outcome"
+          }
+        },
+        "type": "object",
+        "required": [
+          "digit",
+          "label",
+          "outcome"
+        ],
+        "title": "KeypadOption"
+      },
+      "Language": {
+        "type": "string",
+        "enum": [
+          "en",
+          "hi",
+          "ml",
+          "ta"
+        ],
+        "title": "Language"
+      },
+      "LaunchResult": {
+        "properties": {
+          "status": {
+            "$ref": "#/components/schemas/CampaignStatus"
+          },
+          "queued_contacts": {
+            "type": "integer",
+            "title": "Queued Contacts"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status",
+          "queued_contacts"
+        ],
+        "title": "LaunchResult"
+      },
+      "LoginRequest": {
+        "properties": {
+          "email": {
+            "type": "string",
+            "maxLength": 254,
+            "title": "Email",
+            "examples": [
+              "organizer@example.com"
+            ]
+          },
+          "password": {
+            "type": "string",
+            "maxLength": 128,
+            "title": "Password"
+          }
+        },
+        "type": "object",
+        "required": [
+          "email",
+          "password"
+        ],
+        "title": "LoginRequest"
+      },
+      "Me": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "email": {
+            "type": "string",
+            "title": "Email"
+          },
+          "role": {
+            "type": "string",
+            "title": "Role"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "email",
+          "role"
+        ],
+        "title": "Me"
+      },
+      "OrganizerSignup": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Name",
+            "examples": [
+              "Asha Thomas"
+            ]
+          },
+          "email": {
+            "type": "string",
+            "maxLength": 254,
+            "pattern": "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$",
+            "title": "Email",
+            "examples": [
+              "organizer@example.com"
+            ]
+          },
+          "password": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 8,
+            "title": "Password"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "email",
+          "password"
+        ],
+        "title": "OrganizerSignup"
+      },
+      "Outcome": {
+        "type": "string",
+        "enum": [
+          "pending",
+          "confirmed",
+          "declined",
+          "callback",
+          "no_answer",
+          "voicemail",
+          "opted_out",
+          "wrong_number",
+          "failed"
+        ],
+        "title": "Outcome"
+      },
+      "PaymentOrder": {
+        "properties": {
+          "order_id": {
+            "type": "string",
+            "title": "Order Id"
+          },
+          "amount_inr": {
+            "type": "integer",
+            "title": "Amount Inr"
+          },
+          "currency": {
+            "type": "string",
+            "title": "Currency",
+            "default": "INR"
+          },
+          "gateway_key_id": {
+            "type": "string",
+            "title": "Gateway Key Id"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          }
+        },
+        "type": "object",
+        "required": [
+          "order_id",
+          "amount_inr",
+          "gateway_key_id",
+          "status"
+        ],
+        "title": "PaymentOrder"
+      },
+      "PaymentWebhook": {
+        "properties": {
+          "order_id": {
+            "type": "string",
+            "title": "Order Id"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "examples": [
+              "paid"
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "order_id",
+          "status"
+        ],
+        "title": "PaymentWebhook"
+      },
+      "PosterResult": {
+        "properties": {
+          "poster_url": {
+            "type": "string",
+            "title": "Poster Url"
+          }
+        },
+        "type": "object",
+        "required": [
+          "poster_url"
+        ],
+        "title": "PosterResult"
+      },
+      "RegisterRequest": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email"
+          },
+          "party_size": {
+            "type": "integer",
+            "maximum": 10.0,
+            "minimum": 1.0,
+            "title": "Party Size",
+            "default": 1
+          },
+          "consent": {
+            "type": "boolean",
+            "title": "Consent",
+            "description": "Must be true. The person agrees to the privacy notice"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "consent"
+        ],
+        "title": "RegisterRequest"
+      },
+      "RegisterResult": {
+        "properties": {
+          "stage": {
+            "$ref": "#/components/schemas/Stage"
+          },
+          "requires_payment": {
+            "type": "boolean",
+            "title": "Requires Payment"
+          },
+          "amount_inr": {
+            "type": "integer",
+            "title": "Amount Inr"
+          }
+        },
+        "type": "object",
+        "required": [
+          "stage",
+          "requires_payment",
+          "amount_inr"
+        ],
+        "title": "RegisterResult"
+      },
+      "RegistrationPage": {
+        "properties": {
+          "first_name": {
+            "type": "string",
+            "title": "First Name"
+          },
+          "language": {
+            "$ref": "#/components/schemas/Language"
+          },
+          "event": {
+            "$ref": "#/components/schemas/EventDetails"
+          },
+          "poster_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Poster Url"
+          },
+          "fee_inr": {
+            "type": "integer",
+            "title": "Fee Inr"
+          },
+          "stage": {
+            "$ref": "#/components/schemas/Stage"
+          },
+          "already_registered": {
+            "type": "boolean",
+            "title": "Already Registered"
+          }
+        },
+        "type": "object",
+        "required": [
+          "first_name",
+          "language",
+          "event",
+          "fee_inr",
+          "stage",
+          "already_registered"
+        ],
+        "title": "RegistrationPage"
+      },
+      "RetryRequest": {
+        "properties": {
+          "target": {
+            "$ref": "#/components/schemas/RetryTarget",
+            "default": "non_responders"
+          },
+          "fallback_channel": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Channel"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Also send this channel to people who cannot be called"
+          }
+        },
+        "type": "object",
+        "title": "RetryRequest"
+      },
+      "RetryResult": {
+        "properties": {
+          "queued": {
+            "type": "integer",
+            "title": "Queued"
+          },
+          "skipped_opted_out": {
+            "type": "integer",
+            "title": "Skipped Opted Out"
+          },
+          "skipped_max_attempts": {
+            "type": "integer",
+            "title": "Skipped Max Attempts"
+          }
+        },
+        "type": "object",
+        "required": [
+          "queued",
+          "skipped_opted_out",
+          "skipped_max_attempts"
+        ],
+        "title": "RetryResult"
+      },
+      "RetryTarget": {
+        "type": "string",
+        "enum": [
+          "non_responders",
+          "no_answer",
+          "voicemail",
+          "failed"
+        ],
+        "title": "RetryTarget"
+      },
+      "RowError": {
+        "properties": {
+          "row": {
+            "type": "integer",
+            "title": "Row"
+          },
+          "field": {
+            "type": "string",
+            "title": "Field"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          }
+        },
+        "type": "object",
+        "required": [
+          "row",
+          "field",
+          "message"
+        ],
+        "title": "RowError"
+      },
+      "Stage": {
+        "type": "string",
+        "enum": [
+          "invited",
+          "responded",
+          "registered",
+          "paid",
+          "attended"
+        ],
+        "title": "Stage"
+      },
+      "Template": {
+        "properties": {
+          "key": {
+            "type": "string",
+            "title": "Key",
+            "examples": [
+              "seminar_invite"
+            ]
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description"
+          },
+          "variables": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Variables"
+          },
+          "keypad_options": {
+            "items": {
+              "$ref": "#/components/schemas/KeypadOption"
+            },
+            "type": "array",
+            "title": "Keypad Options"
+          },
+          "requires_payment": {
+            "type": "boolean",
+            "title": "Requires Payment",
+            "default": false
+          },
+          "default_channels": {
+            "items": {
+              "$ref": "#/components/schemas/Channel"
+            },
+            "type": "array",
+            "title": "Default Channels"
+          }
+        },
+        "type": "object",
+        "required": [
+          "key",
+          "name",
+          "description",
+          "variables",
+          "keypad_options",
+          "default_channels"
+        ],
+        "title": "Template"
+      },
+      "TestCallRequest": {
+        "properties": {
+          "phone": {
+            "type": "string",
+            "title": "Phone",
+            "examples": [
+              "+919800000000"
+            ]
+          },
+          "language": {
+            "$ref": "#/components/schemas/Language"
+          }
+        },
+        "type": "object",
+        "required": [
+          "phone",
+          "language"
+        ],
+        "title": "TestCallRequest"
+      },
+      "TestCallResult": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status",
+          "message"
+        ],
+        "title": "TestCallResult"
+      },
+      "Token": {
+        "properties": {
+          "access_token": {
+            "type": "string",
+            "title": "Access Token"
+          },
+          "token_type": {
+            "type": "string",
+            "title": "Token Type",
+            "default": "bearer"
+          }
+        },
+        "type": "object",
+        "required": [
+          "access_token"
+        ],
+        "title": "Token"
+      },
+      "Translation": {
+        "properties": {
+          "language": {
+            "$ref": "#/components/schemas/Language"
+          },
+          "call_script": {
+            "type": "string",
+            "title": "Call Script",
+            "description": "Text-to-speech script. {name} is replaced per contact"
+          },
+          "voicemail_script": {
+            "type": "string",
+            "title": "Voicemail Script"
+          },
+          "email_subject": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email Subject"
+          },
+          "email_body": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email Body"
+          },
+          "whatsapp_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Whatsapp Text",
+            "description": "{name} and {link} are replaced per contact"
+          },
+          "social_caption": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Social Caption"
+          },
+          "back_translation_en": {
+            "type": "string",
+            "title": "Back Translation En",
+            "description": "English rendering of the translation, so the organizer can check it"
+          },
+          "approved": {
+            "type": "boolean",
+            "title": "Approved",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "language",
+          "call_script",
+          "voicemail_script",
+          "back_translation_en"
+        ],
+        "title": "Translation"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "ctx": {
+            "type": "object",
+            "title": "Context"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      }
+    },
+    "securitySchemes": {
+      "HTTPBearer": {
+        "type": "http",
+        "description": "Paste the token from /auth/login",
+        "scheme": "bearer"
+      }
+    }
+  }
+}
