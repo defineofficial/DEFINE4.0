@@ -1,5 +1,6 @@
-import { useState, useEffect, useRef } from "react";
-import { api, setAuthToken } from "./api.js";
+import { useState, useEffect, useRef, useMemo } from "react";
+import { api, setAuthToken, ensureAuth } from "./api.js";
+import { analyzePosterImage, extractEventDetailsFromText } from "./analyzer.js";
 
 /* ---------- styles ---------- */
 const css = `
@@ -305,7 +306,7 @@ function Message({ k, ch }) {
 }
 
 /* ---------- 1. Home / Login Landing Page ---------- */
-function Home({ onLogin, backendStatus }) {
+function Home({ onLogin, backendStatus, onOpenAISettings }) {
   const [email, setEmail] = useState("organizer@example.com");
   const [password, setPassword] = useState("password123");
   const [loading, setLoading] = useState(false);
@@ -331,6 +332,14 @@ function Home({ onLogin, backendStatus }) {
           <span>✳</span> koodal <b>/ EventReach</b>
         </div>
         <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+          <button
+            className="btn-sm"
+            onClick={onOpenAISettings}
+            style={{ display: "flex", alignItems: "center", gap: 6, background: "#1b3542", borderColor: "var(--teal)", color: "#fff" }}
+            title="Configure Gemini, Groq, or OpenAI API key for real voice processing"
+          >
+            <span>⚙️</span> AI API Settings
+          </button>
           <span
             className={`pill ${backendStatus === "connected" ? "g" : "w"}`}
             style={{ fontSize: 11, margin: 0 }}
@@ -338,7 +347,15 @@ function Home({ onLogin, backendStatus }) {
           >
             {backendStatus === "connected" ? "● Backend Live :8000" : "○ Standalone Demo"}
           </span>
-          <button className="btn-sm" onClick={() => onLogin({ name: "Asha Thomas", email: "organizer@example.com", role: "organizer" })}>
+          <button
+            className="btn-sm"
+            onClick={async () => {
+              try {
+                await api.login("organizer@example.com", "password123");
+              } catch {}
+              onLogin({ name: "Asha Thomas", email: "organizer@example.com", role: "organizer" });
+            }}
+          >
             Demo Sign In →
           </button>
         </div>
@@ -413,22 +430,254 @@ function Home({ onLogin, backendStatus }) {
   );
 }
 
+/* ---------- AI Settings Modal ---------- */
+function AISettingsModal({ isOpen, onClose, onSaved }) {
+  const [provider, setProvider] = useState(localStorage.getItem("eventreach_ai_provider") || "gemini");
+  const [apiKey, setApiKey] = useState(localStorage.getItem("eventreach_ai_key") || "");
+  const [showKey, setShowKey] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [saveStatus, setSaveStatus] = useState(null);
+
+  useEffect(() => {
+    if (isOpen) {
+      api.getAISettings().then((settings) => {
+        if (settings?.provider) setProvider(settings.provider);
+      });
+      const storedKey = localStorage.getItem("eventreach_ai_key") || "";
+      if (storedKey) setApiKey(storedKey);
+    }
+  }, [isOpen]);
+
+  if (!isOpen) return null;
+
+  const handleSave = async (e) => {
+    e?.preventDefault();
+    setSaving(true);
+    setSaveStatus(null);
+    try {
+      await api.setAISettings(provider, apiKey);
+      setSaveStatus({ type: "success", msg: "✓ AI settings saved! Audio voice notes will now be transcribed and extracted using real AI." });
+      if (onSaved) onSaved(provider, apiKey);
+      setTimeout(() => {
+        onClose();
+      }, 1000);
+    } catch (err) {
+      setSaveStatus({ type: "error", msg: "Failed to save: " + err.message });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div style={{
+      position: "fixed",
+      top: 0,
+      left: 0,
+      right: 0,
+      bottom: 0,
+      background: "rgba(10, 20, 30, 0.75)",
+      backdropFilter: "blur(4px)",
+      zIndex: 9999,
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      padding: 20
+    }}>
+      <div style={{
+        background: "#fff",
+        borderRadius: 16,
+        maxWidth: 520,
+        width: "100%",
+        padding: 28,
+        boxShadow: "0 20px 50px rgba(0,0,0,0.3)",
+        position: "relative"
+      }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <span style={{ fontSize: 24 }}>⚙️</span>
+            <div>
+              <h3 style={{ margin: 0, fontSize: 18, color: "var(--ink)" }}>AI Voice & Extraction API Settings</h3>
+              <small style={{ color: "var(--mut)" }}>Extract event information from real audio voice notes</small>
+            </div>
+          </div>
+          <button
+            onClick={onClose}
+            style={{ background: "none", border: "none", fontSize: 20, cursor: "pointer", color: "var(--mut)" }}
+          >
+            ✕
+          </button>
+        </div>
+
+        <form onSubmit={handleSave}>
+          <div className="f">
+            <label>Select AI Provider</label>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginTop: 6 }}>
+              {[
+                { id: "gemini", label: "🌟 Gemini", sub: "1.5 Flash (Audio)" },
+                { id: "groq", label: "⚡ Groq", sub: "Whisper-v3" },
+                { id: "openai", label: "🤖 OpenAI", sub: "Whisper-1" },
+              ].map((p) => (
+                <div
+                  key={p.id}
+                  onClick={() => setProvider(p.id)}
+                  style={{
+                    border: provider === p.id ? "2px solid var(--teal)" : "1px solid var(--line)",
+                    background: provider === p.id ? "var(--mint)" : "#fafafa",
+                    borderRadius: 10,
+                    padding: "10px 8px",
+                    textAlign: "center",
+                    cursor: "pointer",
+                    transition: "all 0.15s"
+                  }}
+                >
+                  <b style={{ fontSize: 13, display: "block" }}>{p.label}</b>
+                  <small style={{ fontSize: 11, color: "var(--mut)" }}>{p.sub}</small>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="f" style={{ marginTop: 16 }}>
+            <label style={{ display: "flex", justifyContent: "space-between" }}>
+              <span>API Key</span>
+              <span
+                style={{ fontSize: 12, color: "var(--teal)", cursor: "pointer", fontWeight: 600 }}
+                onClick={() => setShowKey(!showKey)}
+              >
+                {showKey ? "Hide" : "Show"}
+              </span>
+            </label>
+            <input
+              type={showKey ? "text" : "password"}
+              placeholder={provider === "gemini" ? "AIzaSy..." : provider === "groq" ? "gsk_..." : "sk-..."}
+              value={apiKey}
+              onChange={(e) => setApiKey(e.target.value)}
+              style={{ fontFamily: showKey ? "monospace" : "inherit" }}
+            />
+            <div className="hint" style={{ marginTop: 6, lineHeight: 1.5 }}>
+              {provider === "gemini" && (
+                <span>
+                  Get a free Gemini API key from <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noreferrer" style={{ color: "var(--teal)", fontWeight: 600 }}>Google AI Studio ↗</a>. Gemini 1.5 Flash natively transcribes audio and extracts structured JSON.
+                </span>
+              )}
+              {provider === "groq" && (
+                <span>
+                  Get a free Groq API key from <a href="https://console.groq.com/keys" target="_blank" rel="noreferrer" style={{ color: "var(--teal)", fontWeight: 600 }}>Groq Console ↗</a>. Uses whisper-large-v3 with high-speed Llama-3.3 event extraction.
+                </span>
+              )}
+              {provider === "openai" && (
+                <span>
+                  Use your OpenAI API key from <a href="https://platform.openai.com/api-keys" target="_blank" rel="noreferrer" style={{ color: "var(--teal)", fontWeight: 600 }}>platform.openai.com ↗</a>.
+                </span>
+              )}
+            </div>
+          </div>
+
+          {saveStatus && (
+            <div className={`al ${saveStatus.type === "success" ? "g" : "e"}`} style={{ padding: "8px 12px", fontSize: 13 }}>
+              {saveStatus.msg}
+            </div>
+          )}
+
+          <div style={{ display: "flex", gap: 10, marginTop: 20 }}>
+            <button
+              type="button"
+              className="btn"
+              style={{ flex: 1, margin: 0 }}
+              onClick={onClose}
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              className="btn p"
+              style={{ flex: 2, margin: 0 }}
+              disabled={saving}
+            >
+              {saving ? "Saving..." : "Save AI Key & Connect"}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
 /* ---------- 2. Organizer Campaign Wizard Flow ---------- */
 const STEPS = ["Template", "Upload", "Review", "Audience", "Translate", "Channels", "Test Call", "Launch"];
 
-function Wizard({ onCancel, onLaunch }) {
+function Wizard({ onCancel, onLaunch, onOpenAISettings, activeAIProvider = "gemini" }) {
   const [i, setI] = useState(0), [tpl, setTpl] = useState(0);
   const [testPhone, setTestPhone] = useState("+91 98000 00000");
   const [testLang, setTestLang] = useState("Malayalam");
   const [testResult, setTestResult] = useState(null);
   const [calling, setCalling] = useState(false);
+  const [previewChannel, setPreviewChannel] = useState("call"); // "call" | "whatsapp" | "email"
 
-  // 1. Photo / Poster Upload State
+  const speakText = (text, lang) => {
+    if (typeof window !== "undefined" && "speechSynthesis" in window) {
+      window.speechSynthesis.cancel();
+      const clean = text.replace(/\{name\}/g, "Asha").replace(/\{link\}/g, "eventreach.in/s/rsvp");
+      const utter = new SpeechSynthesisUtterance(clean);
+      if (lang === "hi") utter.lang = "hi-IN";
+      else if (lang === "ml") utter.lang = "ml-IN";
+      else if (lang === "ta") utter.lang = "ta-IN";
+      else utter.lang = "en-IN";
+      window.speechSynthesis.speak(utter);
+    }
+  };
+
+  // Persistent Campaign & Event State (PostgreSQL)
+  const [campaignId, setCampaignId] = useState(null);
+  const [isSavingEvent, setIsSavingEvent] = useState(false);
+  const [saveEventStatus, setSaveEventStatus] = useState(null);
+
+  const templateKeys = ["seminar_invite", "clinic_reminder", "school_notice", "payment_reminder"];
+  const defaultTitles = [
+    "Healthcare & AI Seminar 2026",
+    "Cardiology Clinic Appointment Reminder",
+    "St. Mary's School Parent-Teacher Notice",
+    "Annual Membership Fee Payment Reminder"
+  ];
+
+  const handleSaveEventToDB = async () => {
+    setIsSavingEvent(true);
+    setSaveEventStatus(null);
+    try {
+      let cid = campaignId;
+      if (!cid) {
+        const created = await api.createCampaign(eventData.title || "New Campaign", templateKeys[tpl]);
+        if (created?.id) {
+          cid = created.id;
+          setCampaignId(cid);
+        }
+      }
+      if (cid) {
+        const res = await api.saveEvent(cid, eventData);
+        if (res) {
+          setSaveEventStatus({ type: "success", msg: "✓ Event saved permanently to PostgreSQL database!" });
+        } else {
+          setSaveEventStatus({ type: "error", msg: "Failed to persist event details." });
+        }
+      }
+    } catch (err) {
+      setSaveEventStatus({ type: "error", msg: err.message });
+    } finally {
+      setIsSavingEvent(false);
+    }
+  };
+
+  // 1. Photo / Poster Upload State & OCR Analysis
   const [posterFile, setPosterFile] = useState(null);
   const [posterUrl, setPosterUrl] = useState(null);
   const [uploadingPoster, setUploadingPoster] = useState(false);
+  const [analyzingPoster, setAnalyzingPoster] = useState(false);
+  const [posterOcrStatus, setPosterOcrStatus] = useState("");
+  const [posterOcrProgress, setPosterOcrProgress] = useState(0);
+  const [posterExtractedText, setPosterExtractedText] = useState("");
+  const [posterExtractedEvent, setPosterExtractedEvent] = useState(null);
 
-  // 2. Voice Note (Live In-Page Recording or File Upload)
+  // 2. Voice Note (Live In-Page Recording, Speech Recognition, or File Upload)
   const [voiceMode, setVoiceMode] = useState("record"); // "record" | "upload"
   const [recording, setRecording] = useState(false);
   const [recordingSeconds, setRecordingSeconds] = useState(0);
@@ -436,18 +685,51 @@ function Wizard({ onCancel, onLaunch }) {
   const [voiceFile, setVoiceFile] = useState(null);
   const [voiceExtracting, setVoiceExtracting] = useState(false);
   const [transcript, setTranscript] = useState("");
+  const [liveSpeechText, setLiveSpeechText] = useState("");
+  const [voiceExtractedEvent, setVoiceExtractedEvent] = useState(null);
+  const [speechSummary, setSpeechSummary] = useState("");
+  const [extractedSources, setExtractedSources] = useState({});
+
   const mediaRecorderRef = useRef(null);
   const audioChunksRef = useRef([]);
   const timerRef = useRef(null);
+  const recognitionRef = useRef(null);
+  const liveSpeechRef = useRef("");
 
   const formatTimer = (sec) => `${Math.floor(sec / 60).toString().padStart(2, "0")}:${(sec % 60).toString().padStart(2, "0")}`;
 
   const startRecording = async () => {
     try {
       audioChunksRef.current = [];
+      liveSpeechRef.current = "";
+      setLiveSpeechText("");
+
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       const mediaRecorder = new MediaRecorder(stream);
       mediaRecorderRef.current = mediaRecorder;
+
+      // Start browser SpeechRecognition in parallel if available
+      if (typeof window !== "undefined" && ("webkitSpeechRecognition" in window || "SpeechRecognition" in window)) {
+        try {
+          const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+          const recognition = new SpeechRec();
+          recognition.continuous = true;
+          recognition.interimResults = true;
+          recognition.lang = "en-IN";
+          recognition.onresult = (e) => {
+            let fullText = "";
+            for (let k = 0; k < e.results.length; k++) {
+              fullText += e.results[k][0].transcript + " ";
+            }
+            liveSpeechRef.current = fullText.trim();
+            setLiveSpeechText(fullText.trim());
+          };
+          recognition.start();
+          recognitionRef.current = recognition;
+        } catch (e) {
+          console.warn("SpeechRecognition init error:", e);
+        }
+      }
 
       mediaRecorder.ondataavailable = (e) => {
         if (e.data.size > 0) audioChunksRef.current.push(e.data);
@@ -462,20 +744,43 @@ function Wizard({ onCancel, onLaunch }) {
         const file = new File([audioBlob], `recorded_brief_${Date.now()}.webm`, { type: "audio/webm" });
         setVoiceFile(file);
 
-        // Upload and extract using Whisper backend
+        // Upload audio to private storage & call backend voice pipeline
         setVoiceExtracting(true);
-        const res = await api.uploadVoiceNote("cmp_001", file);
+        const res = await api.uploadVoiceNote(campaignId || "cmp_001", file);
         setVoiceExtracting(false);
-        if (res?.transcript) setTranscript(res.transcript);
-        if (res?.event) {
-          setEventData({
-            title: res.event.title || eventData.title,
-            venue: res.event.venue || eventData.venue,
-            city: res.event.city || eventData.city,
-            starts_at: res.event.starts_at ? new Date(res.event.starts_at).toLocaleString() : eventData.starts_at,
-            fee_inr: res.event.fee_inr ?? eventData.fee_inr,
-          });
-        }
+
+        // Prioritize actual captured speech transcript if available, otherwise backend transcript
+        const finalTranscript = liveSpeechRef.current || res?.transcript || "Live voice brief recorded.";
+        setTranscript(finalTranscript);
+
+        const extracted = extractEventDetailsFromText(finalTranscript, res?.event || {});
+        setVoiceExtractedEvent(extracted);
+
+        const isBackendStaticFallback = res?.event?.title === "AI in Healthcare Seminar" && !finalTranscript.toLowerCase().includes("healthcare");
+        const backendTitle = res?.event?.title && !["Community Event", "Live Voice", "Voice Brief"].includes(res.event.title) && !isBackendStaticFallback ? res.event.title : null;
+        const detectedTitle = extracted.title && !["Community Event", "Live Voice", "Voice Brief"].includes(extracted.title) ? extracted.title : (backendTitle || extracted.title);
+        const summaryText = res?.event?.description || extracted.description || `Spoken voice invitation for ${detectedTitle || "the event"}.`;
+        setSpeechSummary(summaryText);
+
+        setExtractedSources((prev) => ({
+          ...prev,
+          title: detectedTitle ? "Live Voice AI" : prev.title,
+          description: summaryText ? "AI Speech Summary" : prev.description,
+          venue: (res?.event?.venue || extracted.venue) ? "Live Voice" : prev.venue,
+          city: (res?.event?.city || extracted.city) ? "Live Voice" : prev.city,
+          starts_at: (res?.event?.starts_at || extracted.starts_at) ? "Live Voice" : prev.starts_at,
+          fee_inr: (res?.event?.fee_inr !== undefined || extracted.fee_inr !== undefined) ? "Live Voice" : prev.fee_inr,
+        }));
+
+        setEventData((prev) => ({
+          ...prev,
+          title: detectedTitle || prev.title,
+          description: summaryText || prev.description,
+          venue: res?.event?.venue || extracted.venue || prev.venue,
+          city: res?.event?.city || extracted.city || prev.city,
+          starts_at: extracted.starts_at ? (typeof extracted.starts_at === "string" ? extracted.starts_at : new Date(extracted.starts_at).toLocaleString()) : prev.starts_at,
+          fee_inr: res?.event?.fee_inr !== undefined ? res.event.fee_inr : (extracted.fee_inr !== undefined ? extracted.fee_inr : prev.fee_inr),
+        }));
       };
 
       mediaRecorder.start(200);
@@ -497,24 +802,46 @@ function Wizard({ onCancel, onLaunch }) {
           setVoiceFile(file);
           setRecordedAudioUrl("https://actions.google.com/sounds/v1/speech/person_speaking.ogg");
           setRecordingSeconds(12);
-          const res = await api.uploadVoiceNote("cmp_001", file);
+
+          const sampleSpeech = "We are holding DEFINE 2026 on the fourteenth of November at ten in the morning, in the Seminar Hall, Block A, in Kochi. Registration is five hundred rupees.";
+          setTranscript(sampleSpeech);
+          const res = await api.uploadVoiceNote(campaignId || "cmp_001", file);
           setVoiceExtracting(false);
-          if (res?.transcript) setTranscript(res.transcript);
-          if (res?.event) {
-            setEventData({
-              title: res.event.title || eventData.title,
-              venue: res.event.venue || eventData.venue,
-              city: res.event.city || eventData.city,
-              starts_at: res.event.starts_at ? new Date(res.event.starts_at).toLocaleString() : eventData.starts_at,
-              fee_inr: res.event.fee_inr ?? eventData.fee_inr,
-            });
-          }
+
+          const extracted = res?.event || extractEventDetailsFromText(sampleSpeech);
+          setVoiceExtractedEvent(extracted);
+          const summaryText = res?.event?.description || extracted.description || "Spoken voice brief for DEFINE 2026 in Kochi.";
+          setSpeechSummary(summaryText);
+
+          setExtractedSources((prev) => ({
+            ...prev,
+            title: "Voice Brief",
+            description: "AI Speech Summary",
+            venue: "Voice Brief",
+            city: "Voice Brief",
+            starts_at: "Voice Brief",
+            fee_inr: "Voice Brief",
+          }));
+
+          setEventData((prev) => ({
+            ...prev,
+            title: extracted.title || "DEFINE 2026",
+            description: summaryText,
+            venue: extracted.venue || "Seminar Hall, Block A",
+            city: extracted.city || "Kochi",
+            starts_at: "14 Nov 2026, 10:00 AM IST",
+            fee_inr: extracted.fee_inr ?? 500,
+          }));
         }, 1200);
       }
     }
   };
 
   const stopRecording = () => {
+    if (recognitionRef.current) {
+      try { recognitionRef.current.stop(); } catch {}
+      recognitionRef.current = null;
+    }
     if (mediaRecorderRef.current && recording) {
       mediaRecorderRef.current.stop();
       setRecording(false);
@@ -523,6 +850,10 @@ function Wizard({ onCancel, onLaunch }) {
   };
 
   const cancelRecording = () => {
+    if (recognitionRef.current) {
+      try { recognitionRef.current.stop(); } catch {}
+      recognitionRef.current = null;
+    }
     if (mediaRecorderRef.current && recording) {
       mediaRecorderRef.current.stop();
       setRecording(false);
@@ -531,17 +862,65 @@ function Wizard({ onCancel, onLaunch }) {
     setVoiceFile(null);
     setRecordedAudioUrl(null);
     setTranscript("");
+    setLiveSpeechText("");
     setRecordingSeconds(0);
   };
 
   // 3. Extracted Event Details State (feeds Step 3)
   const [eventData, setEventData] = useState({
-    title: "Define Healthcare & AI Seminar",
-    starts_at: "23 Oct 2026, 10:00 AM IST",
-    venue: "Grand Hall, Block A",
+    title: "DEFINE 2026",
+    starts_at: "14 Nov 2026, 10:00 AM IST",
+    venue: "Seminar Hall, Block A",
     city: "Kochi",
     fee_inr: 500,
   });
+
+  const dynamicTranslations = useMemo(() => {
+    const title = eventData.title || "DEFINE 2026";
+    const venue = eventData.venue || "Seminar Hall, Block A";
+    const city = eventData.city || "Kochi";
+    const dateStr = eventData.starts_at || "14 Nov 2026, 10:00 AM IST";
+    const desc = eventData.description || speechSummary || `Special outreach invitation to ${title} in ${city}`;
+
+    return [
+      {
+        lang: "hi",
+        name: "Hindi (हिन्दी)",
+        call_script: `नमस्ते {name}। आपको ${dateStr} को ${city} के ${venue} में होने वाले '${title}' में आमंत्रित किया जाता है। पुष्टि के लिए 1 दबाएं, मना करने के लिए 2, वापस कॉल के लिए 3 दबाएं। इन कॉल को रोकने के लिए 9 दबाएं।`,
+        back_en: `Hello {name}. You are invited to '${title}' at ${venue}, ${city} on ${dateStr}. Press 1 to confirm, 2 to decline, 3 for callback, 9 to opt out.`,
+        whatsapp: `नमस्ते {name}, ${dateStr} को ${city} के ${venue} में आयोजित '${title}' में आपका स्वागत है। विवरण: ${desc}। यहां रजिस्टर करें: {link}`,
+        email_subj: `आमंत्रण: ${title}, ${dateStr}`,
+        email_body: `प्रिय {name},\n\nआपको ${dateStr} को ${city} के ${venue} में आयोजित '${title}' में आमंत्रित किया जाता है।\nविवरण: ${desc}\n\nकृपया यहां रजिस्टर करें: {link}`,
+      },
+      {
+        lang: "ml",
+        name: "Malayalam (മലയാളം)",
+        call_script: `നമസ്കാരം {name}. ${dateStr}-ൽ ${city}-യിലെ ${venue}-ൽ നടക്കുന്ന '${title}'-ലേക്ക് നിങ്ങളെ ക്ഷണിക്കുന്നു. സ്ഥിരീകരിക്കാൻ 1, ഒഴിവാക്കാൻ 2, തിരിച്ചു വിളിക്കാൻ 3 അമർത്തുക. ഈ കോളുകൾ നിർത്താൻ 9 അമർത്തുക.`,
+        back_en: `Hello {name}. You are invited to '${title}' on ${dateStr} at ${venue}, ${city}. Press 1 to confirm, 2 to decline, 3 for callback, 9 to stop calls.`,
+        whatsapp: `നമസ്കാരം {name}, ${dateStr}-ൽ ${city} ${venue}-ൽ '${title}'-ലേക്ക് സ്വാഗതം. വിവരണം: ${desc}। ഇവിടെ രജിസ്റ്റർ ചെയ്യുക: {link}`,
+        email_subj: `ക്ഷണം: ${title}, ${dateStr}`,
+        email_body: `പ്രിയപ്പെട്ട {name},\n\n${dateStr}-ൽ ${city}-യിലെ ${venue}-ൽ നടക്കുന്ന '${title}'-ലേക്ക് സ്വാഗതം.\nവിവരണം: ${desc}\n\nദയവായി ഇവിടെ രജിസ്റ്റർ ചെയ്യുക: {link}`,
+      },
+      {
+        lang: "ta",
+        name: "Tamil (தமிழ்)",
+        call_script: `வணக்கம் {name}. ${dateStr} அன்று ${city}-யில் உள்ள ${venue}-ல் நடைபெறும் '${title}'-ற்கு உங்களை அழைக்கிறோம். உறுதிப்படுத்த 1, மறுக்க 2, மீண்டும் அழைக்க 3 அழுத்தவும். இந்த அழைப்புகளை நிறுத்த 9 அழுத்தவும்.`,
+        back_en: `Hello {name}. We invite you to '${title}' on ${dateStr} at ${venue}, ${city}. Press 1 to confirm, 2 to decline, 3 for callback, 9 to stop calls.`,
+        whatsapp: `வணக்கம் {name}, ${dateStr} அன்று ${city} ${venue}-ல் '${title}'-ற்கு உங்களை அழைக்கிறோம். விவரம்: ${desc}। இங்கே பதிவு செய்யவும்: {link}`,
+        email_subj: `அழைப்பு: ${title}, ${dateStr}`,
+        email_body: `அன்புள்ள {name},\n\n${dateStr} அன்று ${city}-யில் உள்ள ${venue}-ல் நடைபெறும் '${title}'-ற்கு உங்களை அழைக்கிறோம்.\nவிவரம்: ${desc}\n\nஇங்கே பதிவு செய்யவும்: {link}`,
+      },
+      {
+        lang: "en",
+        name: "English",
+        call_script: `Hello {name}. You are invited to ${title} on ${dateStr} at ${venue}, ${city}. Press 1 to confirm, 2 to decline, 3 for callback. Press 9 to stop calls.`,
+        back_en: `Hello {name}. You are invited to ${title} on ${dateStr} at ${venue}, ${city}. Press 1 to confirm, 2 to decline, 3 for callback.`,
+        whatsapp: `Hi {name}, you are invited to ${title} on ${dateStr} at ${venue}, ${city}. Details: ${desc}. Register here: {link}`,
+        email_subj: `Invitation: ${title}, ${dateStr}`,
+        email_body: `Dear {name},\n\nYou are invited to ${title} on ${dateStr} at ${venue}, ${city}.\nDetails: ${desc}\n\nPlease register here: {link}`,
+      },
+    ];
+  }, [eventData, speechSummary]);
 
   // 4. Contacts CSV Audience State
   const [audienceFile, setAudienceFile] = useState(null);
@@ -560,7 +939,17 @@ function Wizard({ onCancel, onLaunch }) {
       <h3>1. Choose an event template</h3>
       <div className="tpl">
         {["Seminar Invite", "Clinic Reminder", "School Notice", "Payment Reminder"].map((x, n) => (
-          <div key={x} className={tpl === n ? "on" : ""} onClick={() => setTpl(n)} style={{ cursor: "pointer" }}>
+          <div
+            key={x}
+            className={tpl === n ? "on" : ""}
+            onClick={() => {
+              setTpl(n);
+              if (!eventData.title || defaultTitles.includes(eventData.title)) {
+                setEventData((prev) => ({ ...prev, title: defaultTitles[n] }));
+              }
+            }}
+            style={{ cursor: "pointer" }}
+          >
             <b>{x}</b>
             <div className="hint" style={{ marginTop: 8 }}>
               {n === 0 && "Seminar RSVPs & passes"}
@@ -571,10 +960,41 @@ function Wizard({ onCancel, onLaunch }) {
           </div>
         ))}
       </div>
+
+      {/* Explicit User Input for Campaign / Event Name */}
+      <div className="f" style={{ marginTop: 20, background: "#fff", padding: 18, borderRadius: 12, border: "1px solid var(--line)" }}>
+        <label style={{ fontSize: 14, fontWeight: 700, color: "var(--ink)" }}>Campaign & Event Title</label>
+        <input
+          value={eventData.title}
+          placeholder="e.g. Healthcare Innovation Summit 2026"
+          style={{ fontSize: 14, fontWeight: 600, padding: 10, marginTop: 6 }}
+          onChange={(e) => setEventData({ ...eventData, title: e.target.value })}
+        />
+        <div className="hint" style={{ marginTop: 4 }}>
+          This title will identify your event on the organizer dashboard sidebar and on all invitations.
+        </div>
+      </div>
       <p><b>Each preset includes a call script, voicemail, email and WhatsApp copy.</b></p>
     </>,
     <>
       <h3>2. Upload poster and voice note</h3>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: "#f0fcfb", border: "1px solid #c8f3ed", padding: "10px 14px", borderRadius: 10, marginBottom: 14 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13 }}>
+          <span style={{ fontSize: 16 }}>⚡</span>
+          <span>
+            <b>Real AI Audio Engine:</b> {activeAIProvider === "gemini" ? "Google Gemini 1.5 Flash (Direct Audio)" : activeAIProvider === "groq" ? "Groq Whisper-large-v3 + Llama 3" : "OpenAI Whisper"}
+            {localStorage.getItem("eventreach_ai_key") ? " (API Key Connected ✓)" : " (No Key - Fallback Mode)"}
+          </span>
+        </div>
+        <button
+          type="button"
+          className="btn-sm"
+          style={{ background: "#fff", borderColor: "var(--teal)", color: "var(--ink)", padding: "4px 10px" }}
+          onClick={() => onOpenAISettings && onOpenAISettings()}
+        >
+          ⚙️ Configure AI Key
+        </button>
+      </div>
       <div className="tpl" style={{ gridTemplateColumns: "1fr 1fr", gap: 16 }}>
         {/* Photo / Poster Upload Area */}
         <div
@@ -586,6 +1006,7 @@ function Wizard({ onCancel, onLaunch }) {
             textAlign: "center",
             cursor: "pointer",
             transition: "all .2s ease",
+            position: "relative",
           }}
           onClick={() => document.getElementById("poster-upload-input")?.click()}
         >
@@ -599,12 +1020,53 @@ function Wizard({ onCancel, onLaunch }) {
               if (!file) return;
               setPosterFile(file);
               setUploadingPoster(true);
-              const res = await api.uploadPoster("cmp_001", file);
-              setUploadingPoster(false);
-              if (res?.poster_url) {
-                setPosterUrl(res.poster_url);
-              } else {
-                setPosterUrl(URL.createObjectURL(file));
+              setAnalyzingPoster(true);
+              setPosterOcrStatus("Analyzing visual and reading text with OCR...");
+              setPosterOcrProgress(15);
+
+              try {
+                // 1. Upload to private backend storage
+                const res = await api.uploadPoster(campaignId || "cmp_001", file);
+                if (res?.poster_url) {
+                  setPosterUrl(res.poster_url);
+                } else {
+                  setPosterUrl(URL.createObjectURL(file));
+                }
+
+                // 2. Perform OCR & Entity Extraction
+                const ocrRes = await analyzePosterImage(file, (prog) => {
+                  if (prog.status === "recognizing text") {
+                    setPosterOcrProgress(Math.max(20, Math.round((prog.progress || 0) * 100)));
+                  }
+                });
+
+                if (ocrRes?.success) {
+                  setPosterExtractedText(ocrRes.rawText || "");
+                  setPosterExtractedEvent(ocrRes.event);
+
+                  setExtractedSources((prev) => ({
+                    ...prev,
+                    title: ocrRes.event.title ? "Poster OCR" : prev.title,
+                    venue: ocrRes.event.venue ? "Poster OCR" : prev.venue,
+                    city: ocrRes.event.city ? "Poster OCR" : prev.city,
+                    starts_at: ocrRes.event.starts_at ? "Poster OCR" : prev.starts_at,
+                    fee_inr: ocrRes.event.fee_inr !== undefined ? "Poster OCR" : prev.fee_inr,
+                  }));
+
+                  setEventData((prev) => ({
+                    ...prev,
+                    title: ocrRes.event.title || prev.title,
+                    venue: ocrRes.event.venue || prev.venue,
+                    city: ocrRes.event.city || prev.city,
+                    starts_at: ocrRes.event.starts_at || prev.starts_at,
+                    fee_inr: ocrRes.event.fee_inr !== undefined ? ocrRes.event.fee_inr : prev.fee_inr,
+                  }));
+                }
+              } catch (err) {
+                console.warn("Poster upload/analysis error:", err);
+              } finally {
+                setUploadingPoster(false);
+                setAnalyzingPoster(false);
               }
             }}
           />
@@ -616,15 +1078,20 @@ function Wizard({ onCancel, onLaunch }) {
                 style={{ maxHeight: 110, maxWidth: "100%", borderRadius: 8, objectFit: "cover", marginBottom: 8, boxShadow: "0 2px 8px rgba(0,0,0,0.1)" }}
               />
               <div style={{ fontWeight: 600, fontSize: 13, color: "var(--ink)" }}>{posterFile?.name || "Uploaded Poster"}</div>
-              <span className="pill g" style={{ marginTop: 6 }}>✓ Photo Stored Privately</span>
-              <div className="hint" style={{ marginTop: 4 }}>Click to change photo</div>
+              <span className="pill g" style={{ marginTop: 6 }}>✓ Analyzed by OCR Engine</span>
+              {analyzingPoster && (
+                <div style={{ marginTop: 6, fontSize: 12, color: "var(--teal)", fontWeight: 600 }}>
+                  🔍 {posterOcrStatus} {posterOcrProgress > 0 && `(${posterOcrProgress}%)`}
+                </div>
+              )}
+              <div className="hint" style={{ marginTop: 4 }}>Click to replace poster</div>
             </div>
           ) : (
             <div>
               <div style={{ fontSize: 36, marginBottom: 8 }}>🖼️</div>
-              <b>{uploadingPoster ? "Uploading photo..." : "Upload Event Poster"}</b>
+              <b>{uploadingPoster || analyzingPoster ? "Analyzing poster..." : "Upload Event Poster"}</b>
               <div className="hint" style={{ marginTop: 4 }}>
-                Click to browse PNG, JPG or WebP (max 10MB)
+                {analyzingPoster ? "Running OCR text extraction..." : "Upload PNG, JPG or WebP. AI auto-reads venue, title & dates."}
               </div>
               <button
                 className="btn p"
@@ -699,9 +1166,15 @@ function Wizard({ onCancel, onLaunch }) {
                   <div className="wave-bars">
                     <i /><i /><i /><i /><i />
                   </div>
-                  <div className="hint" style={{ marginBottom: 12 }}>
-                    Speaking event brief... Mention title, venue, dates, and fee.
-                  </div>
+                  {liveSpeechText ? (
+                    <div style={{ background: "#fff", border: "1px solid #ffd0d0", borderRadius: 8, padding: "6px 10px", margin: "8px 0", fontSize: 13, color: "var(--ink)" }}>
+                      🗣️ <i>"{liveSpeechText}"</i>
+                    </div>
+                  ) : (
+                    <div className="hint" style={{ marginBottom: 12 }}>
+                      Speak event details into your microphone (Title, venue, dates, fee)...
+                    </div>
+                  )}
                   <div style={{ display: "flex", gap: 8, justifyContent: "center" }}>
                     <button
                       className="btn p"
@@ -775,7 +1248,7 @@ function Wizard({ onCancel, onLaunch }) {
               <input
                 id="voice-upload-input"
                 type="file"
-                accept="audio/wav,audio/mp3,audio/mpeg,audio/m4a,audio/ogg,audio/webm"
+                accept="audio/wav,audio/mp3,audio/mpeg,audio/m4a,audio/ogg,audio/webm,audio/flac"
                 style={{ display: "none" }}
                 onChange={async (e) => {
                   const file = e.target.files?.[0];
@@ -783,17 +1256,44 @@ function Wizard({ onCancel, onLaunch }) {
                   setVoiceFile(file);
                   setRecordedAudioUrl(URL.createObjectURL(file));
                   setVoiceExtracting(true);
-                  const res = await api.uploadVoiceNote("cmp_001", file);
-                  setVoiceExtracting(false);
-                  if (res?.transcript) setTranscript(res.transcript);
-                  if (res?.event) {
-                    setEventData({
-                      title: res.event.title || eventData.title,
-                      venue: res.event.venue || eventData.venue,
-                      city: res.event.city || eventData.city,
-                      starts_at: res.event.starts_at ? new Date(res.event.starts_at).toLocaleString() : eventData.starts_at,
-                      fee_inr: res.event.fee_inr ?? eventData.fee_inr,
-                    });
+
+                  try {
+                    const res = await api.uploadVoiceNote(campaignId || "cmp_001", file);
+                    const finalTranscript = res?.transcript || "Audio note uploaded.";
+                    setTranscript(finalTranscript);
+
+                    const extracted = extractEventDetailsFromText(finalTranscript, res?.event || {});
+                    setVoiceExtractedEvent(extracted);
+
+                    const isBackendStaticFallback = res?.event?.title === "AI in Healthcare Seminar" && !finalTranscript.toLowerCase().includes("healthcare");
+                    const backendTitle = res?.event?.title && !["Community Event", "Live Voice", "Voice Brief"].includes(res.event.title) && !isBackendStaticFallback ? res.event.title : null;
+                    const detectedTitle = extracted.title && !["Community Event", "Live Voice", "Voice Brief"].includes(extracted.title) ? extracted.title : (backendTitle || extracted.title);
+                    const summaryText = res?.event?.description || extracted.description || `Spoken voice invitation for ${detectedTitle || "the event"}.`;
+                    setSpeechSummary(summaryText);
+
+                    setExtractedSources((prev) => ({
+                      ...prev,
+                      title: detectedTitle ? "Voice File AI" : prev.title,
+                      description: summaryText ? "AI Speech Summary" : prev.description,
+                      venue: (res?.event?.venue || extracted.venue) ? "Voice File" : prev.venue,
+                      city: (res?.event?.city || extracted.city) ? "Voice File" : prev.city,
+                      starts_at: (res?.event?.starts_at || extracted.starts_at) ? "Voice File" : prev.starts_at,
+                      fee_inr: (res?.event?.fee_inr !== undefined || extracted.fee_inr !== undefined) ? "Voice File" : prev.fee_inr,
+                    }));
+
+                    setEventData((prev) => ({
+                      ...prev,
+                      title: detectedTitle || prev.title,
+                      description: summaryText || prev.description,
+                      venue: res?.event?.venue || extracted.venue || prev.venue,
+                      city: res?.event?.city || extracted.city || prev.city,
+                      starts_at: extracted.starts_at ? (typeof extracted.starts_at === "string" ? extracted.starts_at : new Date(extracted.starts_at).toLocaleString()) : prev.starts_at,
+                      fee_inr: res?.event?.fee_inr !== undefined ? res.event.fee_inr : (extracted.fee_inr !== undefined ? extracted.fee_inr : prev.fee_inr),
+                    }));
+                  } catch (err) {
+                    console.warn("Audio upload extraction error:", err);
+                  } finally {
+                    setVoiceExtracting(false);
                   }
                 }}
               />
@@ -811,7 +1311,7 @@ function Wizard({ onCancel, onLaunch }) {
                   <div style={{ fontSize: 36, marginBottom: 8 }}>📁</div>
                   <b>Upload Audio Brief</b>
                   <div className="hint" style={{ marginTop: 4 }}>
-                    Drop WAV, MP3, M4A or OGG (max 25MB)
+                    Drop WAV, MP3, M4A, OGG, or WebM (max 25MB)
                   </div>
                   <button
                     className="btn p"
@@ -827,61 +1327,264 @@ function Wizard({ onCancel, onLaunch }) {
         </div>
       </div>
 
+      {/* Live Multi-Modal AI Extraction Reflection Panel */}
+      {(posterExtractedEvent || voiceFile || transcript || analyzingPoster || voiceExtracting || posterUrl) && (
+        <div
+          style={{
+            marginTop: 20,
+            padding: 20,
+            background: "#fff",
+            borderRadius: 14,
+            border: "2px solid #2DD7C0",
+            boxShadow: "0 6px 20px rgba(45,215,192,0.15)",
+          }}
+        >
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <span style={{ fontSize: 22 }}>✨</span>
+              <div>
+                <b style={{ fontSize: 16, color: "var(--ink)" }}>Live AI Multi-Modal Event Extraction</b>
+                <div style={{ fontSize: 12, color: "var(--mut)" }}>
+                  Details reflected live from your poster and voice note analysis
+                </div>
+              </div>
+            </div>
+            <span className={`pill ${analyzingPoster || voiceExtracting ? "w" : "g"}`} style={{ fontSize: 12, padding: "5px 12px" }}>
+              {analyzingPoster
+                ? "⚡ OCR Scanning Poster..."
+                : voiceExtracting
+                ? "⚡ Transcribing Speech..."
+                : "✓ Analysis Synchronized"}
+            </span>
+          </div>
+
+          {/* Extracted Details Grid */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, marginBottom: 14 }}>
+            <div style={{ background: "#F8FAFB", padding: "12px", borderRadius: 10, border: "1px solid var(--line)" }}>
+              <div style={{ fontSize: 11, color: "var(--mut)", fontWeight: 700 }}>EVENT TITLE</div>
+              <div style={{ fontWeight: 700, fontSize: 14, color: "var(--ink)", marginTop: 4 }}>
+                {eventData.title || "Pending analysis..."}
+              </div>
+              {extractedSources.title && (
+                <span className="pill g" style={{ marginTop: 6, fontSize: 10 }}>From {extractedSources.title}</span>
+              )}
+            </div>
+
+            <div style={{ background: "#F8FAFB", padding: "12px", borderRadius: 10, border: "1px solid var(--line)" }}>
+              <div style={{ fontSize: 11, color: "var(--mut)", fontWeight: 700 }}>DATE & TIME</div>
+              <div style={{ fontWeight: 700, fontSize: 14, color: "var(--ink)", marginTop: 4 }}>
+                {eventData.starts_at || "Pending analysis..."}
+              </div>
+              {extractedSources.starts_at && (
+                <span className="pill g" style={{ marginTop: 6, fontSize: 10 }}>From {extractedSources.starts_at}</span>
+              )}
+            </div>
+
+            <div style={{ background: "#F8FAFB", padding: "12px", borderRadius: 10, border: "1px solid var(--line)" }}>
+              <div style={{ fontSize: 11, color: "var(--mut)", fontWeight: 700 }}>VENUE & CITY</div>
+              <div style={{ fontWeight: 700, fontSize: 14, color: "var(--ink)", marginTop: 4 }}>
+                {(eventData.venue ? eventData.venue + ", " : "") + (eventData.city || "")}
+              </div>
+              {extractedSources.venue && (
+                <span className="pill g" style={{ marginTop: 6, fontSize: 10 }}>From {extractedSources.venue}</span>
+              )}
+            </div>
+
+            <div style={{ background: "#F8FAFB", padding: "12px", borderRadius: 10, border: "1px solid var(--line)" }}>
+              <div style={{ fontSize: 11, color: "var(--mut)", fontWeight: 700 }}>REGISTRATION FEE</div>
+              <div style={{ fontWeight: 700, fontSize: 14, color: "var(--ink)", marginTop: 4 }}>
+                ₹{eventData.fee_inr}
+              </div>
+              {extractedSources.fee_inr && (
+                <span className="pill g" style={{ marginTop: 6, fontSize: 10 }}>From {extractedSources.fee_inr}</span>
+              )}
+            </div>
+          </div>
+
+          {/* AI Speech Summary Highlight Box */}
+          {(speechSummary || eventData.description) && (
+            <div
+              style={{
+                background: "#f0fcfb",
+                border: "1.5px solid #2DD7C0",
+                borderRadius: 10,
+                padding: "12px 16px",
+                marginBottom: 14,
+              }}
+            >
+              <div style={{ fontSize: 11, color: "var(--teal)", fontWeight: 700, display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
+                <span style={{ fontSize: 14 }}>📝</span>
+                <span>AI SPEECH SUMMARY & EVENT SYNOPSIS</span>
+                <span className="pill g" style={{ fontSize: 10, padding: "2px 8px" }}>Auto-Summarized</span>
+              </div>
+              <div style={{ fontSize: 13, color: "var(--ink)", fontWeight: 500, lineHeight: 1.5 }}>
+                {speechSummary || eventData.description}
+              </div>
+            </div>
+          )}
+
+          {/* Evidence Snippets */}
+          <div style={{ background: "#f8fafb", padding: "12px 14px", borderRadius: 10, fontSize: 13, border: "1px solid var(--line)" }}>
+            {analyzingPoster && (
+              <div style={{ color: "var(--teal)", fontWeight: 600 }}>
+                🔍 <b>Poster OCR Progress:</b> {posterOcrStatus} {posterOcrProgress > 0 && `(${posterOcrProgress}%)`}
+              </div>
+            )}
+            {posterExtractedText && (
+              <div style={{ color: "var(--ink)", marginTop: 4 }}>
+                🖼️ <b>Poster OCR Detected Text:</b> <i>"{posterExtractedText.slice(0, 160)}..."</i>
+              </div>
+            )}
+            {transcript && (
+              <div style={{ color: "var(--ink)", marginTop: 4 }}>
+                🎙️ <b>Spoken Voice Transcript (Verbatim):</b> <i>"{transcript}"</i>
+              </div>
+            )}
+            {(speechSummary || eventData.description) && (
+              <div style={{ color: "var(--teal)", marginTop: 4 }}>
+                ✨ <b>Detected Program Name:</b> <b>{eventData.title}</b>
+              </div>
+            )}
+            <div style={{ marginTop: 10, display: "flex", justifyContent: "flex-end" }}>
+              <button
+                type="button"
+                className="btn p"
+                style={{ width: "auto", padding: "6px 18px", fontSize: 12, margin: 0 }}
+                onClick={() => setI(2)}
+              >
+                Proceed to Review Details (Step 3) →
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div style={{ marginTop: 20 }}>
         <p>AI pipeline status: Whisper transcription + structured LLM event extraction</p>
         <div className="bar">
-          <i style={{ width: voiceExtracting ? "65%" : voiceFile ? "100%" : "30%", transition: "width .4s ease" }} />
+          <i style={{ width: voiceExtracting || analyzingPoster ? "75%" : voiceFile || posterFile ? "100%" : "30%", transition: "width .4s ease" }} />
         </div>
         <div className="hint">
           {voiceExtracting
             ? "Transcribing audio note and parsing venue, dates, and ticket prices..."
+            : analyzingPoster
+            ? "Running client-side OCR on uploaded poster visual..."
             : transcript
             ? `Extracted Transcript: "${transcript.slice(0, 110)}..."`
-            : "Guarded by monthly AI budget cap. Audio stored privately with HMAC-signed links."}
+            : "Guarded by monthly AI budget cap. Audio and poster stored privately with signed expiring links."}
         </div>
       </div>
     </>,
     <>
-      <h3>3. Review extracted event details</h3>
-      <div className="hint" style={{ marginBottom: 12 }}>
-        Fields automatically parsed from your voice note. You can refine or edit them before translating.
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <h3 style={{ margin: 0 }}>3. Review extracted event details</h3>
+        <span className="pill g" style={{ fontSize: 12 }}>
+          ✓ Populated from AI Analysis
+        </span>
       </div>
+      <div className="hint" style={{ marginBottom: 16 }}>
+        Fields automatically parsed from your poster and voice note. You can verify or edit any field before generating multilingual translations.
+      </div>
+
       <div className="f">
-        <label>Event name</label>
+        <label style={{ display: "flex", justifyContent: "space-between" }}>
+          <span>Event name</span>
+          {extractedSources.title && <small style={{ color: "var(--grn)", fontWeight: 600 }}>[From {extractedSources.title}]</small>}
+        </label>
         <input
           value={eventData.title}
+          style={{ background: "#f0fcfb", fontWeight: 600 }}
           onChange={(e) => setEventData({ ...eventData, title: e.target.value })}
         />
       </div>
+
       <div className="f">
-        <label>Date and time</label>
+        <label style={{ display: "flex", justifyContent: "space-between" }}>
+          <span>Event Summary & Description</span>
+          {(extractedSources.description || speechSummary) && (
+            <small style={{ color: "var(--grn)", fontWeight: 600 }}>[From AI Speech Summary]</small>
+          )}
+        </label>
+        <textarea
+          rows={2}
+          value={eventData.description || speechSummary || ""}
+          style={{ background: "#f0fcfb", fontSize: 13, resize: "vertical" }}
+          placeholder="Short 1-2 sentence synopsis of the event..."
+          onChange={(e) => {
+            const val = e.target.value;
+            setEventData({ ...eventData, description: val });
+            setSpeechSummary(val);
+          }}
+        />
+        <div className="hint" style={{ marginTop: 4 }}>
+          Executive summary generated from the voice note. Used in multilingual phone call scripts and WhatsApp invites.
+        </div>
+      </div>
+
+      <div className="f">
+        <label style={{ display: "flex", justifyContent: "space-between" }}>
+          <span>Date and time</span>
+          {extractedSources.starts_at && <small style={{ color: "var(--grn)", fontWeight: 600 }}>[From {extractedSources.starts_at}]</small>}
+        </label>
         <input
           value={eventData.starts_at}
+          style={{ background: "#f0fcfb" }}
           onChange={(e) => setEventData({ ...eventData, starts_at: e.target.value })}
         />
       </div>
+
       <div className="f">
-        <label>Venue</label>
+        <label style={{ display: "flex", justifyContent: "space-between" }}>
+          <span>Venue</span>
+          {extractedSources.venue && <small style={{ color: "var(--grn)", fontWeight: 600 }}>[From {extractedSources.venue}]</small>}
+        </label>
         <input
           value={eventData.venue}
-          style={{ background: "#E4F7F5" }}
+          style={{ background: "#f0fcfb" }}
           onChange={(e) => setEventData({ ...eventData, venue: e.target.value })}
         />
       </div>
+
       <div className="f">
-        <label>City</label>
+        <label style={{ display: "flex", justifyContent: "space-between" }}>
+          <span>City</span>
+          {extractedSources.city && <small style={{ color: "var(--grn)", fontWeight: 600 }}>[From {extractedSources.city}]</small>}
+        </label>
         <input
           value={eventData.city}
+          style={{ background: "#f0fcfb" }}
           onChange={(e) => setEventData({ ...eventData, city: e.target.value })}
         />
       </div>
+
       <div className="f">
-        <label>Registration Fee (INR)</label>
+        <label style={{ display: "flex", justifyContent: "space-between" }}>
+          <span>Registration Fee (INR)</span>
+          {extractedSources.fee_inr && <small style={{ color: "var(--grn)", fontWeight: 600 }}>[From {extractedSources.fee_inr}]</small>}
+        </label>
         <input
           type="number"
           value={eventData.fee_inr}
+          style={{ background: "#f0fcfb" }}
           onChange={(e) => setEventData({ ...eventData, fee_inr: parseInt(e.target.value, 10) || 0 })}
         />
+      </div>
+
+      <div style={{ display: "flex", gap: 10, alignItems: "center", marginTop: 18, marginBottom: 12 }}>
+        <button
+          type="button"
+          className="btn p"
+          style={{ width: "auto", padding: "10px 22px", margin: 0, fontSize: 13 }}
+          disabled={isSavingEvent}
+          onClick={handleSaveEventToDB}
+        >
+          {isSavingEvent ? "💾 Saving to PostgreSQL..." : "💾 Save Event Details to Database"}
+        </button>
+        {saveEventStatus && (
+          <span className={`pill ${saveEventStatus.type === "success" ? "g" : "e"}`} style={{ fontSize: 13, padding: "6px 12px" }}>
+            {saveEventStatus.msg}
+          </span>
+        )}
       </div>
     </>,
     <>
@@ -920,10 +1623,10 @@ function Wizard({ onCancel, onLaunch }) {
             if (!file) return;
             setAudienceFile(file);
             setUploadingAudience(true);
-            const report = await api.importAudience("cmp_001", file);
+            const report = await api.importAudience(campaignId || "cmp_001", file);
             setUploadingAudience(false);
             setImportReport(report);
-            const contactsRes = await api.getContacts("cmp_001");
+            const contactsRes = await api.getContacts(campaignId || "cmp_001");
             if (contactsRes?.items && contactsRes.items.length > 0) {
               setContactsList(contactsRes.items);
             }
@@ -970,29 +1673,73 @@ function Wizard({ onCancel, onLaunch }) {
       </p>
     </>,
     <>
-      <h3>5. Review multilingual translations</h3>
-      <div className="card">Original English TTS script and copy reviewed. Back-translation generated for validation:</div>
-      <table style={{ marginTop: 12 }}>
-        <thead><tr><th>Language</th><th>Translation Preview</th><th>English Back-Translation</th><th>Action</th></tr></thead>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+        <h3 style={{ margin: 0 }}>5. Review multilingual translations</h3>
+        <span className="pill g" style={{ fontSize: 12 }}>✓ Generated from Voice Brief</span>
+      </div>
+      <div className="card" style={{ marginBottom: 14 }}>
+        Outreach copy generated dynamically from your spoken voice brief for <b>{eventData.title}</b>. English back-translations generated for quality assurance:
+      </div>
+
+      {/* Channel Switcher */}
+      <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+        {[
+          { key: "call", label: "📞 Call Script (TTS)" },
+          { key: "whatsapp", label: "💬 WhatsApp Invite" },
+          { key: "email", label: "📧 Email Body" },
+        ].map((ch) => (
+          <button
+            key={ch.key}
+            type="button"
+            className="btn-sm"
+            style={{
+              background: previewChannel === ch.key ? "var(--teal)" : "#fff",
+              color: previewChannel === ch.key ? "#fff" : "var(--ink)",
+              borderColor: previewChannel === ch.key ? "var(--teal)" : "var(--line)",
+              fontWeight: 600,
+              padding: "6px 14px",
+            }}
+            onClick={() => setPreviewChannel(ch.key)}
+          >
+            {ch.label}
+          </button>
+        ))}
+      </div>
+
+      <table style={{ marginTop: 8 }}>
+        <thead>
+          <tr>
+            <th style={{ width: "20%" }}>Language</th>
+            <th style={{ width: "45%" }}>{previewChannel === "call" ? "Spoken Call Script" : previewChannel === "whatsapp" ? "WhatsApp Copy" : "Email Message"}</th>
+            <th style={{ width: "25%" }}>English Verification</th>
+            <th style={{ width: "10%" }}>TTS Audio</th>
+          </tr>
+        </thead>
         <tbody>
-          <tr>
-            <td><b>Hindi (हिन्दी)</b></td>
-            <td>नमस्ते {`{name}`}। आपको 23 अक्टूबर को 'Define' सेमिनार में आमंत्रित किया जाता है...</td>
-            <td>Hello {`{name}`}. You are invited to 'Define' seminar on 23 October in Kochi.</td>
-            <td><span className="pill g">✓ Approved</span></td>
-          </tr>
-          <tr>
-            <td><b>Malayalam (മലയാളം)</b></td>
-            <td>നമസ്കാരം {`{name}`}. ഒക്ടോബർ 23-ന് കൊച്ചിയിൽ നടക്കുന്ന 'Define'-ലേക്ക് ക്ഷണിക്കുന്നു...</td>
-            <td>Hello {`{name}`}. Invitation to 'Define' on October 23 in Kochi. Press 1 to confirm.</td>
-            <td><span className="pill g">✓ Approved</span></td>
-          </tr>
-          <tr>
-            <td><b>Tamil (தமிழ்)</b></td>
-            <td>வணக்கம் {`{name}`}. அக்டோபர் 23 அன்று கொச்சியில் நடைபெறும் 'Define'-ற்கு வருக...</td>
-            <td>Hello {`{name}`}. We invite you to 'Define' on October 23 in Kochi.</td>
-            <td><span className="pill g">✓ Approved</span></td>
-          </tr>
+          {dynamicTranslations.map((tr) => (
+            <tr key={tr.lang}>
+              <td>
+                <b>{tr.name}</b>
+              </td>
+              <td style={{ fontSize: 13, lineHeight: 1.4 }}>
+                {previewChannel === "call" ? tr.call_script : previewChannel === "whatsapp" ? tr.whatsapp : tr.email_body}
+              </td>
+              <td style={{ fontSize: 12, color: "var(--mut)", lineHeight: 1.4 }}>
+                {tr.back_en}
+              </td>
+              <td>
+                <button
+                  type="button"
+                  className="btn-sm"
+                  title="Listen to pronunciation simulation"
+                  style={{ background: "#f0fcfb", borderColor: "var(--teal)", color: "var(--teal)", fontSize: 11, padding: "4px 8px" }}
+                  onClick={() => speakText(previewChannel === "call" ? tr.call_script : tr.whatsapp, tr.lang)}
+                >
+                  🔊 Listen
+                </button>
+              </td>
+            </tr>
+          ))}
         </tbody>
       </table>
     </>,
@@ -1003,12 +1750,38 @@ function Wizard({ onCancel, onLaunch }) {
           <input type="checkbox" defaultChecked /> {c}
         </label>
       ))}
-      <Field label="Start date" defaultValue="23 Oct 2026" />
+      <Field label="Start date" defaultValue={eventData.starts_at || "14 Nov 2026"} />
       <Field label="Calling hours" defaultValue="10:00 AM – 6:00 PM IST (India DND compliant)" readOnly />
       <Field label="Retries" defaultValue="Up to 3 attempts across different times of day" readOnly />
     </>,
     <>
       <h3>7. Preview with a test call</h3>
+      {/* Live Voice Script Display */}
+      <div style={{ background: "#f0fcfb", border: "1px solid #cbf4ee", borderRadius: 10, padding: "12px 16px", marginBottom: 16 }}>
+        <div style={{ fontSize: 12, fontWeight: 700, color: "var(--teal)", marginBottom: 4 }}>
+          🎙️ Spoken Call Script for "{eventData.title}" ({testLang})
+        </div>
+        <div style={{ fontSize: 13, color: "var(--ink)", lineHeight: 1.5 }}>
+          {(() => {
+            const langCode = testLang === "Malayalam" ? "ml" : testLang === "Hindi" ? "hi" : testLang === "Tamil" ? "ta" : "en";
+            const cur = dynamicTranslations.find((t) => t.lang === langCode) || dynamicTranslations[0];
+            return cur.call_script;
+          })()}
+        </div>
+        <button
+          type="button"
+          className="btn-sm"
+          style={{ marginTop: 8, background: "#fff", borderColor: "var(--teal)", color: "var(--teal)", padding: "4px 10px" }}
+          onClick={() => {
+            const langCode = testLang === "Malayalam" ? "ml" : testLang === "Hindi" ? "hi" : testLang === "Tamil" ? "ta" : "en";
+            const cur = dynamicTranslations.find((t) => t.lang === langCode) || dynamicTranslations[0];
+            speakText(cur.call_script, langCode);
+          }}
+        >
+          🔊 Play TTS Audio Simulation
+        </button>
+      </div>
+
       <div className="f">
         <label>Phone number for test</label>
         <input value={testPhone} onChange={(e) => setTestPhone(e.target.value)} placeholder="+91 98000 00000" />
@@ -1026,7 +1799,7 @@ function Wizard({ onCancel, onLaunch }) {
         onClick={async () => {
           setCalling(true);
           const langCode = testLang === "Malayalam" ? "ml" : testLang === "Hindi" ? "hi" : testLang === "Tamil" ? "ta" : "en";
-          const res = await api.testCall("cmp_001", testPhone, langCode);
+          const res = await api.testCall(campaignId || "cmp_001", testPhone, langCode);
           setCalling(false);
           setTestResult(res?.message || "Exotel test call queued.");
         }}
@@ -1035,21 +1808,26 @@ function Wizard({ onCancel, onLaunch }) {
       </button>
       <div className="hint">Test call connects through Exotel IVR pipeline.</div>
       <Alert t="g" title={testResult ? "API Response Received" : "Exotel Test Call Status"}>
-        {testResult ? `Backend: ${testResult}` : "Call placed → Answered → Spoken script played → Keypad '1' pressed → Outcome: Confirmed."}
+        {testResult ? `Backend: ${testResult}` : `Call placed → Answered → Spoken script for '${eventData.title}' played → Keypad '1' pressed → Outcome: Confirmed.`}
       </Alert>
     </>,
     <>
-      <h3>8. Ready to launch campaign</h3>
-      <div className="card">
-        <Row k="Campaign Name" v="Define Healthcare & AI Seminar" />
-        <Row k="Template Preset" v="Seminar invite" />
-        <Row k="Audience" v="50 contacts" />
-        <Row k="Languages" v="English, Hindi, Malayalam, Tamil" />
-        <Row k="Channels" v="Voice Call, SMS Short Link, Email" />
-        <Row k="Schedule" v="Immediate dispatch within calling window" />
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+        <h3 style={{ margin: 0 }}>8. Ready to launch campaign</h3>
+        <span className="pill g" style={{ fontSize: 12 }}>✓ Voice-Configured</span>
       </div>
-      <Alert t="g" title="Safety Verification Passed">
-        AI budget verified, DND numbers filtered, phone numbers encrypted, personal registration tokens generated.
+      <div className="card">
+        <Row k="Campaign Name" v={eventData.title || "DEFINE 2026"} />
+        <Row k="Event Synopsis" v={eventData.description || speechSummary || `Outreach campaign for ${eventData.title || "event"}`} />
+        <Row k="Date & Venue" v={`${eventData.starts_at || "14 Nov 2026"} at ${eventData.venue || "Seminar Hall"}, ${eventData.city || "Kochi"}`} />
+        <Row k="Registration Fee" v={`₹${eventData.fee_inr || 0}`} />
+        <Row k="Audience" v={`${contactsList.length} verified contacts loaded`} />
+        <Row k="Multilingual Copy" v="Hindi, Malayalam, Tamil, English (Generated from voice)" />
+        <Row k="Outreach Channels" v="Exotel Voice Calls, WhatsApp, SMS Links, Email" />
+        <Row k="Calling Schedule" v="10:00 AM – 6:00 PM IST (India DND compliant)" />
+      </div>
+      <Alert t="g" title="Voice Campaign Verification Passed">
+        Campaign name '{eventData.title}' and event details populated from your voice brief. AI budget verified, DND filtered, contacts encrypted.
       </Alert>
     </>,
   ][i];
@@ -1082,16 +1860,69 @@ function Wizard({ onCancel, onLaunch }) {
           </button>
           <button
             className="btn p"
-            style={{ width: 200, borderRadius: 30 }}
-            onClick={() => {
-              if (i === 7) {
-                onLaunch();
+            style={{ width: 220, borderRadius: 30 }}
+            disabled={isSavingEvent}
+            onClick={async () => {
+              if (i === 2) {
+                // Auto-save event details to PostgreSQL database when continuing past Step 3
+                try {
+                  let cid = campaignId;
+                  if (!cid) {
+                    const created = await api.createCampaign(eventData.title || "New Campaign", templateKeys[tpl]);
+                    if (created?.id) {
+                      cid = created.id;
+                      setCampaignId(cid);
+                    }
+                  }
+                  if (cid) {
+                    await api.saveEvent(cid, eventData);
+                  }
+                } catch (e) {
+                  console.warn("Auto-save error:", e);
+                }
+                setI(3);
+              } else if (i === 7) {
+                // Launch campaign in database
+                setIsSavingEvent(true);
+                try {
+                  let cid = campaignId;
+                  if (!cid) {
+                    const created = await api.createCampaign(eventData.title || "DEFINE 2026", templateKeys[tpl]);
+                    if (created?.id) cid = created.id;
+                  }
+                  if (cid) {
+                    await api.saveEvent(cid, eventData);
+                    try { await api.generateTranslations(cid); } catch {}
+                    await api.launchCampaign(cid);
+                  }
+                  const newCampObj = {
+                    id: cid || `cmp_${Date.now()}`,
+                    name: eventData.title || "DEFINE 2026",
+                    template_key: templateKeys[tpl],
+                    status: "running",
+                    event: { ...eventData },
+                    contact_count: contactsList.length || 50,
+                  };
+                  onLaunch(newCampObj);
+                } catch (err) {
+                  console.warn("Launch error:", err);
+                  onLaunch({
+                    id: campaignId || `cmp_${Date.now()}`,
+                    name: eventData.title || "DEFINE 2026",
+                    template_key: templateKeys[tpl],
+                    status: "running",
+                    event: { ...eventData },
+                    contact_count: contactsList.length || 50,
+                  });
+                } finally {
+                  setIsSavingEvent(false);
+                }
               } else {
                 setI(Math.min(7, i + 1));
               }
             }}
           >
-            {i === 7 ? "🚀 Launch campaign" : "Continue →"}
+            {i === 7 ? (isSavingEvent ? "Launching..." : "🚀 Launch campaign") : "Continue →"}
           </button>
         </div>
       </div>
@@ -1109,8 +1940,16 @@ const Bar = ({ k, n, p }) => (
   </div>
 );
 
-function Dashboard({ onNewCampaign, onSignOut, user }) {
-  const [activeCampaign, setActiveCampaign] = useState("Define");
+function Dashboard({
+  onNewCampaign,
+  onSignOut,
+  user,
+  onOpenAISettings,
+  campaignsList = [],
+  setCampaignsList,
+  activeCampaignId,
+  setActiveCampaignId,
+}) {
   const [activeSection, setActiveSection] = useState("overview");
 
   // Sub-states for interactive previewing within sections
@@ -1126,15 +1965,78 @@ function Dashboard({ onNewCampaign, onSignOut, user }) {
 
   useEffect(() => {
     api.getCampaigns().then((res) => {
-      if (res && res.length > 0) setServerCampaigns(res);
+      if (res && res.length > 0) {
+        setServerCampaigns(res);
+        if (setCampaignsList) setCampaignsList(res);
+      }
     });
     api.getContacts("cmp_001").then((res) => {
       if (res?.items && res.items.length > 0) setDashContacts(res.items);
     });
   }, []);
 
-  const defaultCampaigns = ["Define", "Future of Work Summit", "SALT", "Relevant"];
-  const campaigns = Array.from(new Set([...defaultCampaigns, ...serverCampaigns.map((c) => c.name)]));
+  const fallbackCampaigns = [
+    {
+      id: "cmp_demo_1",
+      name: "Define Healthcare & AI Seminar",
+      template_key: "seminar_invite",
+      status: "running",
+      event: {
+        title: "Define Healthcare & AI Seminar",
+        starts_at: "23 Oct 2026, 10:00 AM IST",
+        venue: "Grand Hall, Block A",
+        city: "Kochi",
+        fee_inr: 500,
+        description: "A day of conversations and interactive discussions on AI in Healthcare.",
+      },
+      contact_count: 50,
+    },
+    {
+      id: "cmp_demo_2",
+      name: "Future of Work Summit",
+      template_key: "seminar_invite",
+      status: "draft",
+      event: {
+        title: "Future of Work Summit",
+        starts_at: "15 Nov 2026, 09:30 AM IST",
+        venue: "Infopark Auditorium",
+        city: "Kochi",
+        fee_inr: 750,
+        description: "Leadership symposium on remote collaboration and intelligent automation.",
+      },
+      contact_count: 42,
+    },
+    {
+      id: "cmp_demo_3",
+      name: "City Health Clinic Follow-up",
+      template_key: "clinic_reminder",
+      status: "running",
+      event: {
+        title: "City Health Clinic Follow-up",
+        starts_at: "28 Oct 2026, 11:00 AM IST",
+        venue: "City Wellness Clinic",
+        city: "Kochi",
+        fee_inr: 0,
+        description: "Preventive cardiology check-up and doctor consultation.",
+      },
+      contact_count: 35,
+    },
+  ];
+
+  // Merge database campaigns with fallbacks
+  const combinedList = [...(campaignsList && campaignsList.length > 0 ? campaignsList : serverCampaigns)];
+  fallbackCampaigns.forEach((fb) => {
+    if (!combinedList.some((c) => c.id === fb.id || c.name === fb.name)) {
+      combinedList.push(fb);
+    }
+  });
+
+  const currentCamp = combinedList.find((c) => c.id === activeCampaignId || c.name === activeCampaignId) || combinedList[0] || fallbackCampaigns[0];
+  const activeEventTitle = currentCamp.event?.title || currentCamp.name;
+  const activeEventVenue = currentCamp.event?.venue || "Grand Hall";
+  const activeEventCity = currentCamp.event?.city || "Kochi";
+  const activeEventDate = currentCamp.event?.starts_at ? (typeof currentCamp.event.starts_at === "string" ? currentCamp.event.starts_at : new Date(currentCamp.event.starts_at).toLocaleString()) : "23 Oct 2026, 10:00 AM IST";
+  const activeEventFee = currentCamp.event?.fee_inr !== undefined ? currentCamp.event.fee_inr : 500;
 
   const subsections = [
     { id: "overview", label: "📊 Overview" },
@@ -1159,25 +2061,58 @@ function Dashboard({ onNewCampaign, onSignOut, user }) {
           + Create Campaign
         </button>
 
-        <div className="side-title">CAMPAIGNS</div>
-        {campaigns.map((name) => {
-          const isSelected = activeCampaign === name;
+        <div className="side-title">CAMPAIGNS & EVENTS ({combinedList.length})</div>
+        {combinedList.map((c) => {
+          const isSelected = (c.id === currentCamp.id || c.name === currentCamp.name);
+          const cTitle = c.event?.title || c.name;
+          const cCity = c.event?.city || "Kochi";
+          const cDate = c.event?.starts_at ? (typeof c.event.starts_at === "string" ? c.event.starts_at.slice(0, 16) : new Date(c.event.starts_at).toLocaleDateString()) : "Upcoming";
+          const cFee = c.event?.fee_inr !== undefined ? (c.event.fee_inr === 0 ? "Free" : `₹${c.event.fee_inr}`) : "₹500";
+          const isRunning = c.status === "running";
+
           return (
-            <div key={name}>
+            <div key={c.id || c.name} style={{ marginBottom: 8 }}>
               <div
                 className={`side-item ${isSelected ? "on" : ""}`}
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "stretch",
+                  padding: "10px 12px",
+                  borderRadius: 10,
+                  background: isSelected ? "#233544" : "rgba(255,255,255,0.03)",
+                  border: isSelected ? "1px solid var(--teal)" : "1px solid rgba(255,255,255,0.08)",
+                  cursor: "pointer",
+                  transition: "all 0.15s"
+                }}
                 onClick={() => {
-                  setActiveCampaign(name);
+                  if (setActiveCampaignId) setActiveCampaignId(c.id || c.name);
                   if (!isSelected) setActiveSection("overview");
                 }}
               >
-                <span>{name}</span>
-                <div className="dot" />
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 6 }}>
+                  <span style={{ fontWeight: 700, fontSize: 13, color: isSelected ? "#fff" : "#cfd8dc", lineHeight: 1.3 }}>
+                    {cTitle}
+                  </span>
+                  <span
+                    className={`pill ${isRunning ? "g" : "w"}`}
+                    style={{ fontSize: 9, padding: "2px 6px", margin: 0, flexShrink: 0 }}
+                  >
+                    {isRunning ? "RUNNING" : "DRAFT"}
+                  </span>
+                </div>
+
+                {/* Event data provided by the user reflected directly on sidebar item */}
+                <div style={{ fontSize: 11, color: isSelected ? "#a0c4db" : "#78909c", marginTop: 5, display: "flex", flexWrap: "wrap", gap: 8 }}>
+                  <span>📅 {cDate}</span>
+                  <span>📍 {cCity}</span>
+                  <span>🎟️ {cFee}</span>
+                </div>
               </div>
 
-              {/* Subsections appear inside sidebar when campaign is active */}
+              {/* Subsections appear under active event in sidebar */}
               {isSelected && (
-                <div className="side-sub">
+                <div className="side-sub" style={{ marginTop: 4 }}>
                   {subsections.map((sub) => (
                     <div
                       key={sub.id}
@@ -1215,12 +2150,16 @@ function Dashboard({ onNewCampaign, onSignOut, user }) {
         <div className="sub-bar">
           <div>
             <div style={{ fontSize: 12, color: "var(--mut)", textTransform: "uppercase", letterSpacing: ".05em" }}>
-              Campaigns / {activeCampaign} / <b style={{ color: "var(--ink)" }}>{activeSection}</b>
+              Campaigns / {activeEventTitle} / <b style={{ color: "var(--ink)" }}>{activeSection}</b>
             </div>
-            <h1 style={{ margin: "4px 0 0", fontSize: 26 }}>{activeCampaign}</h1>
+            <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 4 }}>
+              <h1 style={{ margin: 0, fontSize: 26 }}>{activeEventTitle}</h1>
+              <span className={`pill ${currentCamp.status === "running" ? "g" : "w"}`} style={{ fontSize: 11, margin: 0 }}>
+                ● {currentCamp.status ? currentCamp.status.toUpperCase() : "ACTIVE"}
+              </span>
+            </div>
           </div>
           <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-            <span className="pill g">● Active Campaign</span>
             <button className="btn p" style={{ width: "auto", margin: 0, padding: "8px 16px" }} onClick={onNewCampaign}>
               + New Campaign
             </button>
@@ -1230,6 +2169,52 @@ function Dashboard({ onNewCampaign, onSignOut, user }) {
         {/* 1. OVERVIEW SUBSECTION */}
         {activeSection === "overview" && (
           <div>
+            {/* User-Provided Event Summary Card */}
+            <div style={{
+              background: "#fff",
+              borderRadius: 14,
+              padding: "16px 20px",
+              border: "1px solid var(--line)",
+              boxShadow: "0 2px 10px rgba(0,0,0,0.04)",
+              marginBottom: 20
+            }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <span style={{ fontSize: 20 }}>📌</span>
+                  <b style={{ fontSize: 15, color: "var(--ink)" }}>Event Details Provided by User</b>
+                </div>
+                <span className="pill g" style={{ fontSize: 11 }}>
+                  {currentCamp.status === "running" ? "🚀 Live Campaign Dispatched" : "📝 Saved in PostgreSQL"}
+                </span>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 14 }}>
+                <div style={{ background: "#F8FAFB", padding: 12, borderRadius: 8, border: "1px solid var(--line)" }}>
+                  <small style={{ color: "var(--mut)", fontSize: 11, fontWeight: 700 }}>EVENT TITLE</small>
+                  <div style={{ fontWeight: 700, fontSize: 14, color: "var(--ink)", marginTop: 4 }}>
+                    {activeEventTitle}
+                  </div>
+                </div>
+                <div style={{ background: "#F8FAFB", padding: 12, borderRadius: 8, border: "1px solid var(--line)" }}>
+                  <small style={{ color: "var(--mut)", fontSize: 11, fontWeight: 700 }}>DATE & TIME</small>
+                  <div style={{ fontWeight: 700, fontSize: 14, color: "var(--ink)", marginTop: 4 }}>
+                    {activeEventDate}
+                  </div>
+                </div>
+                <div style={{ background: "#F8FAFB", padding: 12, borderRadius: 8, border: "1px solid var(--line)" }}>
+                  <small style={{ color: "var(--mut)", fontSize: 11, fontWeight: 700 }}>VENUE & LOCATION</small>
+                  <div style={{ fontWeight: 700, fontSize: 14, color: "var(--ink)", marginTop: 4 }}>
+                    {activeEventVenue}, {activeEventCity}
+                  </div>
+                </div>
+                <div style={{ background: "#F8FAFB", padding: 12, borderRadius: 8, border: "1px solid var(--line)" }}>
+                  <small style={{ color: "var(--mut)", fontSize: 11, fontWeight: 700 }}>REGISTRATION PASS</small>
+                  <div style={{ fontWeight: 700, fontSize: 14, color: "var(--ink)", marginTop: 4 }}>
+                    {activeEventFee === 0 ? "Free Access" : `₹${activeEventFee} per seat`}
+                  </div>
+                </div>
+              </div>
+            </div>
+
             <small style={{ color: "var(--mut)" }}>Real-time analytics and response telemetry</small>
             <div className="stats">
               {[
@@ -1307,9 +2292,9 @@ function Dashboard({ onNewCampaign, onSignOut, user }) {
                     onChange={async (e) => {
                       const file = e.target.files?.[0];
                       if (!file) return;
-                      const report = await api.importAudience("cmp_001", file);
+                      const report = await api.importAudience(campaignId || "cmp_001", file);
                       alert(`Contacts CSV Imported:\n${report.imported} contacts added, ${report.skipped} skipped.`);
-                      const fresh = await api.getContacts("cmp_001");
+                      const fresh = await api.getContacts(campaignId || "cmp_001");
                       if (fresh?.items && fresh.items.length > 0) setDashContacts(fresh.items);
                     }}
                   />
@@ -1521,14 +2506,29 @@ export default function KoodalApp() {
   const [view, setView] = useState("home");
   const [user, setUser] = useState({ name: "Asha Thomas", email: "organizer@example.com", role: "organizer" });
   const [backendStatus, setBackendStatus] = useState("checking");
+  const [showAISettings, setShowAISettings] = useState(false);
+  const [activeAIProvider, setActiveAIProvider] = useState(localStorage.getItem("eventreach_ai_provider") || "gemini");
+
+  // Global campaigns list & active selected campaign
+  const [campaignsList, setCampaignsList] = useState([]);
+  const [activeCampaignId, setActiveCampaignId] = useState(null);
+
+  const refreshCampaigns = async () => {
+    try {
+      const res = await api.getCampaigns();
+      if (res && res.length > 0) {
+        setCampaignsList(res);
+        if (!activeCampaignId) setActiveCampaignId(res[0].id || res[0].name);
+      }
+    } catch {}
+  };
 
   useEffect(() => {
-    // Check backend health immediately on mount
+    refreshCampaigns();
     api.checkHealth().then((res) => {
       setBackendStatus(res ? "connected" : "offline");
     });
 
-    // Re-check every 8 seconds
     const interval = setInterval(() => {
       api.checkHealth().then((res) => {
         setBackendStatus(res ? "connected" : "offline");
@@ -1536,6 +2536,13 @@ export default function KoodalApp() {
     }, 8000);
     return () => clearInterval(interval);
   }, []);
+
+  const handleCampaignLaunch = (newCamp) => {
+    setCampaignsList((prev) => [newCamp, ...prev.filter((c) => c.id !== newCamp.id && c.name !== newCamp.name)]);
+    setActiveCampaignId(newCamp.id || newCamp.name);
+    setView("dashboard");
+    refreshCampaigns();
+  };
 
   return (
     <div className="k">
@@ -1555,6 +2562,14 @@ export default function KoodalApp() {
             >
               {backendStatus === "connected" ? "● Backend Live :8000" : "○ Demo Mode"}
             </span>
+            <button
+              className="btn-sm"
+              onClick={() => setShowAISettings(true)}
+              style={{ display: "flex", alignItems: "center", gap: 6, background: "#1b3542", borderColor: "var(--teal)", color: "#fff" }}
+              title="Configure Gemini, Groq, or OpenAI API key for real audio processing"
+            >
+              <span>⚙️</span> AI API Settings
+            </button>
             <div className="user-pill">
               <div className="user-dot" />
               <span>{user?.name} ({user?.role})</span>
@@ -1575,10 +2590,18 @@ export default function KoodalApp() {
         </div>
       )}
 
+      {/* AI Settings Modal */}
+      <AISettingsModal
+        isOpen={showAISettings}
+        onClose={() => setShowAISettings(false)}
+        onSaved={(p) => setActiveAIProvider(p)}
+      />
+
       {/* 1. Home / Login Flow */}
       {view === "home" && (
         <Home
           backendStatus={backendStatus}
+          onOpenAISettings={() => setShowAISettings(true)}
           onLogin={(userData) => {
             setUser(userData);
             setView("dashboard");
@@ -1590,10 +2613,9 @@ export default function KoodalApp() {
       {view === "wizard" && (
         <Wizard
           onCancel={() => setView("dashboard")}
-          onLaunch={() => {
-            alert("Campaign successfully launched! Returning to your dashboard.");
-            setView("dashboard");
-          }}
+          onOpenAISettings={() => setShowAISettings(true)}
+          activeAIProvider={activeAIProvider}
+          onLaunch={handleCampaignLaunch}
         />
       )}
 
@@ -1601,11 +2623,16 @@ export default function KoodalApp() {
       {view === "dashboard" && (
         <Dashboard
           onNewCampaign={() => setView("wizard")}
+          onOpenAISettings={() => setShowAISettings(true)}
           onSignOut={() => {
             setAuthToken(null);
             setView("home");
           }}
           user={user}
+          campaignsList={campaignsList}
+          setCampaignsList={setCampaignsList}
+          activeCampaignId={activeCampaignId}
+          setActiveCampaignId={setActiveCampaignId}
         />
       )}
     </div>

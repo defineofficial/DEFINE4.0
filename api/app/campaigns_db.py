@@ -79,9 +79,28 @@ def create_for(conn: psycopg.Connection, me: Me, body: CampaignCreate) -> Campai
 
 
 def save_event_for(conn: psycopg.Connection, me: Me, campaign_id: str, event: EventDetails) -> Campaign:
+    if event.title and event.title.strip():
+        updated = conn.execute(
+            "UPDATE campaigns SET event = %s, name = %s WHERE id = %s AND organizer_id = %s RETURNING id",
+            (Jsonb(event.model_dump(mode="json")), event.title.strip(), _uuid(campaign_id), UUID(me.id)),
+        ).fetchone()
+    else:
+        updated = conn.execute(
+            "UPDATE campaigns SET event = %s WHERE id = %s AND organizer_id = %s RETURNING id",
+            (Jsonb(event.model_dump(mode="json")), _uuid(campaign_id), UUID(me.id)),
+        ).fetchone()
+    if updated is None:
+        conn.rollback()
+        raise _not_found()
+    campaign = get_for(conn, me, campaign_id)
+    conn.commit()
+    return campaign
+
+
+def launch_for(conn: psycopg.Connection, me: Me, campaign_id: str) -> Campaign:
     updated = conn.execute(
-        "UPDATE campaigns SET event = %s WHERE id = %s AND organizer_id = %s RETURNING id",
-        (Jsonb(event.model_dump(mode="json")), _uuid(campaign_id), UUID(me.id)),
+        "UPDATE campaigns SET status = 'running'::campaign_status WHERE id = %s AND organizer_id = %s RETURNING id",
+        (_uuid(campaign_id), UUID(me.id)),
     ).fetchone()
     if updated is None:
         conn.rollback()

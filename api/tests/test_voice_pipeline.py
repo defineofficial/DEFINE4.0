@@ -28,7 +28,22 @@ def test_fallback_extraction():
     assert draft.event.city == "Kochi"
     assert draft.event.fee_inr == 500
     assert draft.event.starts_at.tzinfo is not None
+    assert draft.event.description is not None
     assert "ends_at" in draft.needs_review or "capacity" in draft.needs_review
+
+
+def test_program_name_extraction_variations():
+    cases = [
+        ("We are holding DEFINE on October 24th at Grand Hall.", "DEFINE"),
+        ("We are organizing DEFINE 2026 on the 14th of November in Kochi.", "DEFINE 2026"),
+        ("Join us for DEFINE 4.0 this coming weekend in Bengaluru.", "DEFINE 4.0"),
+        ("Our event called Healthcare Innovators Summit is scheduled on December 5th.", "Healthcare Innovators Summit"),
+        ("This program is called Tech Spark 2026 and it takes place in Chennai.", "Tech Spark 2026"),
+    ]
+    for transcript, expected_title in cases:
+        draft = extract_event_details(transcript, Language.en)
+        assert draft.event.title == expected_title, f"Failed for '{transcript}': got '{draft.event.title}'"
+        assert draft.event.description is not None
 
 
 def test_process_voice_note_budget_tracked():
@@ -37,3 +52,4 @@ def test_process_voice_note_budget_tracked():
     draft = process_voice_note(dummy_audio, "note.wav")
     assert draft.event.fee_inr >= 0
     assert draft.detected_language in (Language.en, Language.hi, Language.ml, Language.ta)
+

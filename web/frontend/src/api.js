@@ -17,11 +17,29 @@ export function setAuthToken(newToken) {
   }
 }
 
-export function getAuthToken() {
+export async function ensureAuth() {
+  if (!token) {
+    try {
+      const res = await fetch(`${API_BASE}/auth/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: "organizer@example.com", password: "password123" }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.access_token) {
+          setAuthToken(data.access_token);
+        }
+      }
+    } catch {
+      // offline / mock mode fallback
+    }
+  }
   return token;
 }
 
 async function request(endpoint, options = {}) {
+  await ensureAuth();
   const headers = {
     "Content-Type": "application/json",
     ...(token ? { Authorization: `Bearer ${token}` } : {}),
@@ -174,6 +192,7 @@ export const api = {
   // File Uploads
   uploadPoster: async (campaignId, file) => {
     try {
+      await ensureAuth();
       const formData = new FormData();
       formData.append("file", file);
       const headers = token ? { Authorization: `Bearer ${token}` } : {};
@@ -195,9 +214,16 @@ export const api = {
 
   uploadVoiceNote: async (campaignId, file) => {
     try {
+      await ensureAuth();
       const formData = new FormData();
       formData.append("file", file);
-      const headers = token ? { Authorization: `Bearer ${token}` } : {};
+      const customKey = localStorage.getItem("eventreach_ai_key") || "";
+      const customProvider = localStorage.getItem("eventreach_ai_provider") || "";
+      const headers = {
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...(customKey ? { "X-AI-Key": customKey } : {}),
+        ...(customProvider ? { "X-AI-Provider": customProvider } : {}),
+      };
       const res = await fetch(`${API_BASE}/campaigns/${campaignId}/voice-note`, {
         method: "POST",
         headers,
@@ -227,6 +253,7 @@ export const api = {
 
   importAudience: async (campaignId, file, defaultLanguage = "en") => {
     try {
+      await ensureAuth();
       const formData = new FormData();
       formData.append("file", file);
       const headers = token ? { Authorization: `Bearer ${token}` } : {};
@@ -256,22 +283,99 @@ export const api = {
 
   saveEvent: async (campaignId, eventDetails) => {
     try {
+      await ensureAuth();
+      let startsAtIso = "2026-10-23T10:00:00+05:30";
+      if (eventDetails?.starts_at) {
+        const d = new Date(eventDetails.starts_at);
+        if (!isNaN(d.getTime())) {
+          startsAtIso = d.toISOString();
+        } else if (typeof eventDetails.starts_at === "string" && eventDetails.starts_at.includes("T")) {
+          startsAtIso = eventDetails.starts_at;
+        }
+      }
+
+      const payload = {
+        title: eventDetails?.title || "Community Outreach Event",
+        description: eventDetails?.description || `Outreach campaign for ${eventDetails?.title || "event"}`,
+        starts_at: startsAtIso,
+        venue: eventDetails?.venue || "Grand Hall",
+        city: eventDetails?.city || "Kochi",
+        fee_inr: parseInt(eventDetails?.fee_inr, 10) || 0,
+      };
+
       return await request(`/campaigns/${campaignId}/event`, {
         method: "PUT",
-        body: JSON.stringify(eventDetails),
+        body: JSON.stringify(payload),
       });
-    } catch {
+    } catch (err) {
+      console.warn("Failed to persist event to backend:", err.message);
       return null;
     }
   },
 
   launchCampaign: async (campaignId) => {
     try {
+      await ensureAuth();
       return await request(`/campaigns/${campaignId}/launch`, {
         method: "POST",
       });
     } catch {
       return { status: "running", queued_contacts: 50 };
+    }
+  },
+
+  // Translations
+  getTranslations: async (campaignId) => {
+    try {
+      await ensureAuth();
+      return await request(`/campaigns/${campaignId}/translations`);
+    } catch {
+      return null;
+    }
+  },
+
+  generateTranslations: async (campaignId) => {
+    try {
+      await ensureAuth();
+      return await request(`/campaigns/${campaignId}/translations/generate`, {
+        method: "POST",
+      });
+    } catch {
+      return null;
+    }
+  },
+
+  saveTranslation: async (campaignId, language, translationData) => {
+    try {
+      await ensureAuth();
+      return await request(`/campaigns/${campaignId}/translations/${language}`, {
+        method: "PUT",
+        body: JSON.stringify(translationData),
+      });
+    } catch {
+      return null;
+    }
+  },
+
+  // AI Configuration
+  getAISettings: async () => {
+    try {
+      return await request("/settings/ai");
+    } catch {
+      return { provider: "gemini", has_key: false };
+    }
+  },
+
+  setAISettings: async (provider, apiKey) => {
+    localStorage.setItem("eventreach_ai_provider", provider);
+    localStorage.setItem("eventreach_ai_key", apiKey);
+    try {
+      return await request("/settings/ai", {
+        method: "POST",
+        body: JSON.stringify({ provider, api_key: apiKey }),
+      });
+    } catch {
+      return { status: "ok", provider };
     }
   },
 

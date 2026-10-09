@@ -121,11 +121,11 @@ def sniff_extension(data: bytes) -> Optional[str]:
         return "ogg"
     if head.startswith(b"fLaC"):
         return "flac"
-    if head.startswith(b"\x1a\x45\xdf\xa3"):
+    if head.startswith(b"\x1a\x45\xdf\xa3") or b"\x1a\x45\xdf\xa3" in data[:32]:
         return "webm"
     if head[4:8] == b"ftyp":
         return "m4a"
-    if head.startswith(b"ID3") or (len(head) >= 2 and head[0] == 0xFF and head[1] & 0xE0 == 0xE0):
+    if head.startswith(b"ID3") or (len(head) >= 2 and head[0] == 0xFF and head[1] & 0xE0 == 0xE0) or b"ID3" in data[:32]:
         return "mp3"
     return None
 

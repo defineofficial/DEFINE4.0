@@ -188,10 +188,12 @@ def save_event(
     campaign_id: str, event: EventDetails, me: Me = Depends(auth.current_organizer),
     conn: Optional[psycopg.Connection] = Depends(database.get_conn),
 ) -> Campaign:
-    if conn is not None:
+    if conn is not None and campaign_id not in db.CAMPAIGNS:
         return campaigns_db.save_event_for(conn, me, campaign_id, event)
     camp = _campaign(campaign_id)
     camp.event = event
+    if event.title and event.title.strip():
+        camp.name = event.title.strip()
     return camp
 
 
@@ -204,12 +206,13 @@ async def upload_poster(
 
     `poster_url` is a signed link that stops working after a few minutes. Fetch the campaign again for a new one.
     """
-    if conn is None:
-        _campaign(campaign_id)
+    is_db_campaign = conn is not None and campaign_id not in db.CAMPAIGNS
+    if is_db_campaign:
+        campaigns_db.get_for(conn, me, campaign_id)
     else:
-        campaigns_db.get_for(conn, me, campaign_id)  # 404 unless it is this organizer's campaign
+        _campaign(campaign_id)
     stored = await _store_upload("poster", campaign_id, file)
-    if conn is None:
+    if not is_db_campaign:
         storage.delete(_MOCK_ASSETS.get((campaign_id, "poster")))
         _MOCK_ASSETS[(campaign_id, "poster")] = stored.key
     else:
@@ -222,21 +225,48 @@ async def upload_poster(
     return PosterResult(poster_url=storage.signed_path(stored.key))
 
 
+@app.get("/settings/ai", tags=["Settings"])
+def get_ai_settings():
+    provider = os.getenv("AI_PROVIDER", "gemini" if os.getenv("GEMINI_API_KEY") else ("groq" if os.getenv("GROQ_API_KEY") else ("openai" if os.getenv("LLM_API_KEY") else "none")))
+    has_key = bool(os.getenv("GEMINI_API_KEY") or os.getenv("GROQ_API_KEY") or os.getenv("LLM_API_KEY") or os.getenv("OPENAI_API_KEY"))
+    return {"provider": provider, "has_key": has_key}
+
+
+@app.post("/settings/ai", tags=["Settings"])
+async def set_ai_settings(request: Request):
+    body = await request.json()
+    provider = body.get("provider", "gemini")
+    api_key = body.get("api_key", "").strip()
+    os.environ["AI_PROVIDER"] = provider
+    if provider == "gemini":
+        os.environ["GEMINI_API_KEY"] = api_key
+    elif provider == "groq":
+        os.environ["GROQ_API_KEY"] = api_key
+    else:
+        os.environ["LLM_API_KEY"] = api_key
+        os.environ["OPENAI_API_KEY"] = api_key
+    return {"status": "ok", "provider": provider, "configured": bool(api_key)}
+
+
 @app.post("/campaigns/{campaign_id}/voice-note", response_model=EventDraft, tags=["Campaigns"])
 async def upload_voice_note(
-    campaign_id: str, file: UploadFile = File(...), me: Me = Depends(auth.current_organizer),
+    campaign_id: str, file: UploadFile = File(...),
+    x_ai_key: Optional[str] = Header(None),
+    x_ai_provider: Optional[str] = Header(None),
+    me: Me = Depends(auth.current_organizer),
     conn: Optional[psycopg.Connection] = Depends(database.get_conn),
 ) -> EventDraft:
     """The audio is stored privately for real (WAV, MP3, M4A, OGG, WebM or FLAC, up to 25 MB).
 
-    The draft is still mock: transcription and extraction come in the voice note pipeline task.
+    The draft is transcribed and extracted with the AI voice pipeline.
     """
-    if conn is None:
-        _campaign(campaign_id)
-    else:
+    is_db_campaign = conn is not None and campaign_id not in db.CAMPAIGNS
+    if is_db_campaign:
         campaigns_db.get_for(conn, me, campaign_id)
+    else:
+        _campaign(campaign_id)
     stored = await _store_upload("voice_note", campaign_id, file)
-    if conn is None:
+    if not is_db_campaign:
         storage.delete(_MOCK_ASSETS.get((campaign_id, "voice_note")))
         _MOCK_ASSETS[(campaign_id, "voice_note")] = stored.key
     else:
@@ -247,7 +277,12 @@ async def upload_voice_note(
             raise
         storage.delete(old_key)
     audio_bytes = storage.read_bytes(stored.key)
-    return voice_pipeline.process_voice_note(audio_bytes, filename=file.filename or "voice_note.mp3")
+    return voice_pipeline.process_voice_note(
+        audio_bytes,
+        filename=file.filename or "voice_note.mp3",
+        custom_key=x_ai_key,
+        provider=x_ai_provider,
+    )
 
 
 # ---------- audience ----------
@@ -367,7 +402,14 @@ def test_call(campaign_id: str, body: TestCallRequest) -> TestCallResult:
 
 
 @app.post("/campaigns/{campaign_id}/launch", response_model=LaunchResult, tags=["Dispatch (B1)"])
-def launch(campaign_id: str) -> LaunchResult:
+def launch(
+    campaign_id: str,
+    me: Me = Depends(auth.current_organizer),
+    conn: Optional[psycopg.Connection] = Depends(database.get_conn),
+) -> LaunchResult:
+    if conn is not None and campaign_id not in db.CAMPAIGNS:
+        camp = campaigns_db.launch_for(conn, me, campaign_id)
+        return LaunchResult(status=camp.status, queued_contacts=camp.contact_count)
     camp = _campaign(campaign_id)
     camp.status = CampaignStatus.running
     queued = sum(not c.opted_out for c in _contacts(campaign_id))
