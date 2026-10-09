@@ -1,125 +1,20 @@
-# DEFINE 4.0
+<div align="center">
+<img width="1200" height="475" alt="GHBanner" src="https://ai.google.dev/static/site-assets/images/share-ais-513315318.png" />
+</div>
 
-The official project submission repository for **DEFINE 4.0 — The World's Realest Hackathon**.
+# Run and deploy your AI Studio app
 
----
+This contains everything you need to run your app locally.
 
-# < Project Name >
+View your app in AI Studio: https://ai.studio/apps/59fa6815-4f9a-4fde-a7ff-1f22b8d9c328
 
-<!-- Add your project cover image below -->
+## Run Locally
 
-![Project Cover](./assets/cover.png)
+**Prerequisites:**  Node.js
 
-## Team Information
 
-- **Team Name**:
-- **Track**:
-
-## Team Members
-
-| Name | Role | GitHub | LinkedIn |
-|------|------|--------|----------|
-| Full Name | Role | [@username](https://github.com/username) | [Profile](https://linkedin.com/in/username) |
-| Full Name | Role | [@username](https://github.com/username) | [Profile](https://linkedin.com/in/username) |
-| Full Name | Role | [@username](https://github.com/username) | [Profile](https://linkedin.com/in/username) |
-| Full Name | Role | [@username](https://github.com/username) | [Profile](https://linkedin.com/in/username) |
-
----
-
-# Project Details
-
-## Overview
-
-Write a concise 2–3 sentence summary of your project, what it does, and the primary problem it addresses.
-
-## Problem Statement
-
-Describe the problem your project aims to solve.
-
-Explain:
-
-- What is the problem?
-- Who is affected by it?
-- Why is solving it important?
-- What are the limitations of existing solutions?
-
-## Solution
-
-Explain your proposed solution and how it addresses the identified problem.
-
-Describe the core idea, workflow, and key technologies used to build the solution.
-
----
-
-# Demo
-
-### Demo Video
-
-[Watch Project Demo](https://www.youtube.com/watch?v=VIDEO_ID)
-
-> Replace `VIDEO_ID` with your YouTube video ID.
-
-### Screenshots
-
-<!-- Add screenshots of your project here -->
-
-![Screenshot 1](./assets/screenshot-1.png)
-
-![Screenshot 2](./assets/screenshot-2.png)
-
-![Screenshot 3](./assets/screenshot-3.png)
-
----
-
-# Live Project
-
-[Visit Live Project](https://your-project-url.com/)
-
----
-
-# Technical Implementation
-
-## Technologies Used
-
-| Category | Technologies |
-|----------|--------------|
-| **Frontend** | Technologies |
-| **Backend** | Technologies |
-| **Database** | Technologies |
-| **APIs / Services** | Technologies |
-| **AI / ML** | Technologies |
-| **DevOps / Deployment** | Technologies |
-| **Other Tools** | Technologies |
-
-## System Architecture
-
-<!-- Add your architecture diagram here -->
-
-![System Architecture](./assets/architecture.png)
-
-## Key Features
-
-- Feature 1
-- Feature 2
-- Feature 3
-- Feature 4
-- Feature 5
-
----
-
-# Setup Instructions
-
-## Prerequisites
-
-Make sure the following are installed before running the project:
-
-- Requirement 1
-- Requirement 2
-- Requirement 3
-
-## Installation
-
-### 1. Clone the Repository
-
-```bash
-git clone <repository-url>
+1. Install dependencies:
+   `npm install`
+2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
+3. Run the app:
+   `npm run dev`

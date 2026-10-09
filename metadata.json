@@ -1,0 +1,6 @@
+{
+  "name": "NoteVault - Academic Study Sanctuary",
+  "description": "Editorial academic study sanctuary, digital resource vault, interactive syllabus navigator, 3D flashcard recall drills, and examination document reader.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
