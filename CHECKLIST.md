@@ -113,7 +113,7 @@
 - [ ] Check dashboard numbers match raw call log for one campaign (`F2 · Aleena`)
 - [ ] Run full recipient journey on a real phone (`F3 · Milind`)
 - [ ] Visual check across all integrated pages: spacing, states, phone width, long Hindi/Malayalam text (`F1 · Akshay`)
-- [ ] **Wire organizer and registration pages to real API, sitting with F1 and F3** (`B2 · Gayathri`)
+- [x] **Wire organizer and registration pages to real API, sitting with F1 and F3 (`web/frontend/src/KoodalApp.jsx`)** (`B2 · Gayathri`)
 - [ ] Wire dashboard to analytics and retry, sitting with F2 (`B1 · Agila`)
 - [ ] Run real calls in every demo language and verify dashboard outcomes (`B1 · Agila`)
 - [ ] **Run registration and test payment end to end from an SMS link** (`B2 · Gayathri`)
