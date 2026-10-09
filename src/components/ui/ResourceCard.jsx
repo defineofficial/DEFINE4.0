@@ -79,53 +79,48 @@ export function ResourceCard({ resource }) {
 
   const isExternalUrl = resource.isExternal
 
-  if (isExternalUrl) {
-    return (
-      <a href={resource.url} target="_blank" rel="noopener noreferrer" className="card glass-panel" style={{ textDecoration: 'none', color: 'inherit' }} tabIndex="0">
-        <div className="card-header">
-          <div className={`badge badge-${resource.type || 'note'}`}>
-            {getTypeIcon(resource.type)} {resource.type}
-          </div>
+  const CardContent = () => (
+    <>
+      <div className="card-cover">
+        <div className="card-actions">
           <button 
             onClick={toggleSave} 
             className="btn-icon" 
             aria-label={isSaved ? "Unsave resource" : "Save resource"}
             title={isSaved ? "Unsave" : "Save"}
           >
-            <Bookmark size={18} fill={isSaved ? "var(--accent-primary)" : "none"} color={isSaved ? "var(--accent-primary)" : "currentColor"} />
+            <Bookmark size={18} fill={isSaved ? "var(--accent-primary)" : "none"} color={isSaved ? "var(--accent-primary)" : "var(--text-secondary)"} />
           </button>
         </div>
-        <div className="card-body">
-          <h3>{resource.title}</h3>
-          <p className="text-secondary text-sm">
-            {resource.author || resource.author_name} • Discovery Result
-          </p>
+        
+        <div className="card-cover-inner">
+          <div className={`badge badge-${resource.type || 'note'}`} style={{ alignSelf: 'center', marginBottom: '1rem' }}>
+            {getTypeIcon(resource.type)}
+          </div>
+          <div className="card-cover-title">{resource.title}</div>
+          <div className="card-cover-author">{resource.author || resource.author_name || 'Unknown'}</div>
         </div>
+      </div>
+      <div className="card-body">
+        <h3>{resource.title}</h3>
+        <p className="text-secondary text-sm">
+          {resource.author || resource.author_name || 'Unknown'}
+        </p>
+      </div>
+    </>
+  )
+
+  if (isExternalUrl) {
+    return (
+      <a href={resource.url} target="_blank" rel="noopener noreferrer" className="card" style={{ textDecoration: 'none', color: 'inherit' }} tabIndex="0">
+        <CardContent />
       </a>
     )
   }
 
   return (
-    <Link to={`/resources/${resource.id}`} className="card glass-panel" style={{ textDecoration: 'none', color: 'inherit' }} tabIndex="0">
-      <div className="card-header">
-        <div className={`badge badge-${resource.type || 'note'}`}>
-          {getTypeIcon(resource.type)} {resource.type}
-        </div>
-        <button 
-          onClick={toggleSave} 
-          className="btn-icon" 
-          aria-label={isSaved ? "Unsave resource" : "Save resource"}
-          title={isSaved ? "Unsave" : "Save"}
-        >
-          <Bookmark size={18} fill={isSaved ? "var(--accent-primary)" : "none"} color={isSaved ? "var(--accent-primary)" : "currentColor"} />
-        </button>
-      </div>
-      <div className="card-body">
-        <h3>{resource.title}</h3>
-        <p className="text-secondary text-sm">
-          {resource.author || resource.author_name} • {new Date(resource.createdAt || resource.created_at).toLocaleDateString()}
-        </p>
-      </div>
+    <Link to={`/resources/${resource.id}`} className="card" style={{ textDecoration: 'none', color: 'inherit' }} tabIndex="0">
+      <CardContent />
     </Link>
   )
 }
