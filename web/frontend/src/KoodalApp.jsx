@@ -409,11 +409,41 @@ const STEPS = ["Template", "Upload", "Review", "Audience", "Translate", "Channel
 
 function Wizard({ onCancel, onLaunch }) {
   const [i, setI] = useState(0), [tpl, setTpl] = useState(0);
-  const [extracting, setExtracting] = useState(false);
   const [testPhone, setTestPhone] = useState("+91 98000 00000");
   const [testLang, setTestLang] = useState("Malayalam");
   const [testResult, setTestResult] = useState(null);
   const [calling, setCalling] = useState(false);
+
+  // 1. Photo / Poster Upload State
+  const [posterFile, setPosterFile] = useState(null);
+  const [posterUrl, setPosterUrl] = useState(null);
+  const [uploadingPoster, setUploadingPoster] = useState(false);
+
+  // 2. Voice Note Upload & AI Extraction State
+  const [voiceFile, setVoiceFile] = useState(null);
+  const [voiceExtracting, setVoiceExtracting] = useState(false);
+  const [transcript, setTranscript] = useState("");
+
+  // 3. Extracted Event Details State (feeds Step 3)
+  const [eventData, setEventData] = useState({
+    title: "Define Healthcare & AI Seminar",
+    starts_at: "23 Oct 2026, 10:00 AM IST",
+    venue: "Grand Hall, Block A",
+    city: "Kochi",
+    fee_inr: 500,
+  });
+
+  // 4. Contacts CSV Audience State
+  const [audienceFile, setAudienceFile] = useState(null);
+  const [uploadingAudience, setUploadingAudience] = useState(false);
+  const [importReport, setImportReport] = useState(null);
+  const [contactsList, setContactsList] = useState([
+    { name: "Anjali Menon", phone_masked: "+91 ••••• ••011", language: "ml", segment: "Faculty" },
+    { name: "Rahul Nair", phone_masked: "+91 ••••• ••012", language: "ml", segment: "Students" },
+    { name: "Fatima Sheikh", phone_masked: "+91 ••••• ••013", language: "hi", segment: "Alumni" },
+    { name: "Meera Iyer", phone_masked: "+91 ••••• ••014", language: "ta", segment: "Faculty" },
+    { name: "Arjun Verma", phone_masked: "+91 ••••• ••015", language: "hi", segment: "Students" },
+  ]);
 
   const body = [
     <>
@@ -435,45 +465,274 @@ function Wizard({ onCancel, onLaunch }) {
     </>,
     <>
       <h3>2. Upload poster and voice note</h3>
-      <div className="tpl" style={{ gridTemplateColumns: "1fr 1fr" }}>
-        <div style={{ border: "2px dashed #9fb3c4", background: "#f8fafb" }}>
-          <b>Event Poster</b>
-          <div className="hint">Drop PNG, JPG or WebP (max 10MB)</div>
-          <span className="pill g" style={{ marginTop: 12 }}>✓ sample_poster.png</span>
+      <div className="tpl" style={{ gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+        {/* Photo / Poster Upload Area */}
+        <div
+          style={{
+            border: "2px dashed #2DD7C0",
+            borderRadius: 14,
+            padding: 24,
+            background: posterUrl ? "#f0fcfb" : "#f8fafb",
+            textAlign: "center",
+            cursor: "pointer",
+            transition: "all .2s ease",
+          }}
+          onClick={() => document.getElementById("poster-upload-input")?.click()}
+        >
+          <input
+            id="poster-upload-input"
+            type="file"
+            accept="image/png,image/jpeg,image/webp,image/svg+xml,application/pdf"
+            style={{ display: "none" }}
+            onChange={async (e) => {
+              const file = e.target.files?.[0];
+              if (!file) return;
+              setPosterFile(file);
+              setUploadingPoster(true);
+              const res = await api.uploadPoster("cmp_001", file);
+              setUploadingPoster(false);
+              if (res?.poster_url) {
+                setPosterUrl(res.poster_url);
+              } else {
+                setPosterUrl(URL.createObjectURL(file));
+              }
+            }}
+          />
+          {posterUrl ? (
+            <div>
+              <img
+                src={posterUrl}
+                alt="Uploaded Poster Preview"
+                style={{ maxHeight: 110, maxWidth: "100%", borderRadius: 8, objectFit: "cover", marginBottom: 8, boxShadow: "0 2px 8px rgba(0,0,0,0.1)" }}
+              />
+              <div style={{ fontWeight: 600, fontSize: 13, color: "var(--ink)" }}>{posterFile?.name || "Uploaded Poster"}</div>
+              <span className="pill g" style={{ marginTop: 6 }}>✓ Photo Stored Privately</span>
+              <div className="hint" style={{ marginTop: 4 }}>Click to change photo</div>
+            </div>
+          ) : (
+            <div>
+              <div style={{ fontSize: 36, marginBottom: 8 }}>🖼️</div>
+              <b>{uploadingPoster ? "Uploading photo..." : "Upload Event Poster"}</b>
+              <div className="hint" style={{ marginTop: 4 }}>
+                Click to browse PNG, JPG or WebP (max 10MB)
+              </div>
+              <button
+                className="btn p"
+                type="button"
+                style={{ width: "auto", margin: "14px auto 0", padding: "6px 16px", fontSize: 12 }}
+              >
+                Choose Photo / Poster
+              </button>
+            </div>
+          )}
         </div>
-        <div style={{ border: "2px dashed #9fb3c4", background: "#f8fafb" }}>
-          <b>Voice Note Audio</b>
-          <div className="hint">Drop WAV, MP3, M4A or OGG (max 25MB)</div>
-          <span className="pill g" style={{ marginTop: 12 }}>✓ voice_brief.mp3</span>
+
+        {/* Voice Note Audio Upload Area */}
+        <div
+          style={{
+            border: "2px dashed #2DD7C0",
+            borderRadius: 14,
+            padding: 24,
+            background: voiceFile ? "#f0fcfb" : "#f8fafb",
+            textAlign: "center",
+            cursor: "pointer",
+            transition: "all .2s ease",
+          }}
+          onClick={() => document.getElementById("voice-upload-input")?.click()}
+        >
+          <input
+            id="voice-upload-input"
+            type="file"
+            accept="audio/wav,audio/mp3,audio/mpeg,audio/m4a,audio/ogg,audio/webm"
+            style={{ display: "none" }}
+            onChange={async (e) => {
+              const file = e.target.files?.[0];
+              if (!file) return;
+              setVoiceFile(file);
+              setVoiceExtracting(true);
+              const res = await api.uploadVoiceNote("cmp_001", file);
+              setVoiceExtracting(false);
+              if (res?.transcript) setTranscript(res.transcript);
+              if (res?.event) {
+                setEventData({
+                  title: res.event.title || eventData.title,
+                  venue: res.event.venue || eventData.venue,
+                  city: res.event.city || eventData.city,
+                  starts_at: res.event.starts_at ? new Date(res.event.starts_at).toLocaleString() : eventData.starts_at,
+                  fee_inr: res.event.fee_inr ?? eventData.fee_inr,
+                });
+              }
+            }}
+          />
+          {voiceFile ? (
+            <div>
+              <div style={{ fontSize: 36, marginBottom: 8 }}>🎙️</div>
+              <div style={{ fontWeight: 600, fontSize: 13, color: "var(--ink)" }}>{voiceFile.name}</div>
+              <span className="pill g" style={{ marginTop: 6 }}>
+                {voiceExtracting ? "Transcribing & Extracting with LLM..." : "✓ Voice Brief Extracted"}
+              </span>
+              <div className="hint" style={{ marginTop: 4 }}>Click to change audio</div>
+            </div>
+          ) : (
+            <div>
+              <div style={{ fontSize: 36, marginBottom: 8 }}>🎙️</div>
+              <b>{voiceExtracting ? "Transcribing audio..." : "Upload Voice Note"}</b>
+              <div className="hint" style={{ marginTop: 4 }}>
+                Click to browse WAV, MP3, M4A or OGG (max 25MB)
+              </div>
+              <button
+                className="btn p"
+                type="button"
+                style={{ width: "auto", margin: "14px auto 0", padding: "6px 16px", fontSize: 12 }}
+              >
+                Choose Audio Brief
+              </button>
+            </div>
+          )}
         </div>
       </div>
-      <p>AI pipeline transcribing and extracting structured event details:</p>
-      <div className="bar"><i style={{ width: "85%" }} /></div>
-      <div className="hint">Guarded by monthly AI budget cap. Audio stored privately with HMAC-signed links.</div>
+
+      <div style={{ marginTop: 20 }}>
+        <p>AI pipeline status: Whisper transcription + structured LLM event extraction</p>
+        <div className="bar">
+          <i style={{ width: voiceExtracting ? "65%" : voiceFile ? "100%" : "30%", transition: "width .4s ease" }} />
+        </div>
+        <div className="hint">
+          {voiceExtracting
+            ? "Transcribing audio note and parsing venue, dates, and ticket prices..."
+            : transcript
+            ? `Extracted Transcript: "${transcript.slice(0, 110)}..."`
+            : "Guarded by monthly AI budget cap. Audio stored privately with HMAC-signed links."}
+        </div>
+      </div>
     </>,
     <>
       <h3>3. Review extracted event details</h3>
-      <Field label="Event name" defaultValue="Define Healthcare & AI Seminar" />
-      <Field label="Date and time" defaultValue="23 Oct 2026, 10:00 AM IST" />
-      <Field label="Venue" defaultValue="Grand Hall, Block A" style={{ background: "#E4F7F5" }} />
-      <Field label="City" defaultValue="Kochi" />
-      <div className="f"><label>Registration Fee (INR)</label><input type="number" defaultValue="500" /></div>
+      <div className="hint" style={{ marginBottom: 12 }}>
+        Fields automatically parsed from your voice note. You can refine or edit them before translating.
+      </div>
+      <div className="f">
+        <label>Event name</label>
+        <input
+          value={eventData.title}
+          onChange={(e) => setEventData({ ...eventData, title: e.target.value })}
+        />
+      </div>
+      <div className="f">
+        <label>Date and time</label>
+        <input
+          value={eventData.starts_at}
+          onChange={(e) => setEventData({ ...eventData, starts_at: e.target.value })}
+        />
+      </div>
+      <div className="f">
+        <label>Venue</label>
+        <input
+          value={eventData.venue}
+          style={{ background: "#E4F7F5" }}
+          onChange={(e) => setEventData({ ...eventData, venue: e.target.value })}
+        />
+      </div>
+      <div className="f">
+        <label>City</label>
+        <input
+          value={eventData.city}
+          onChange={(e) => setEventData({ ...eventData, city: e.target.value })}
+        />
+      </div>
+      <div className="f">
+        <label>Registration Fee (INR)</label>
+        <input
+          type="number"
+          value={eventData.fee_inr}
+          onChange={(e) => setEventData({ ...eventData, fee_inr: parseInt(e.target.value, 10) || 0 })}
+        />
+      </div>
     </>,
     <>
-      <h3>4. Upload audience contacts list</h3>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+        <h3 style={{ margin: 0 }}>4. Upload audience contacts list</h3>
+        <a
+          href="/audience/template.csv"
+          download="contacts-template.csv"
+          style={{ fontSize: 13, color: "var(--teal)", textDecoration: "none", fontWeight: 700 }}
+        >
+          ⬇ Download CSV Template
+        </a>
+      </div>
+
+      {/* CSV Contact List Upload Zone */}
+      <div
+        style={{
+          border: "2px dashed #2DD7C0",
+          borderRadius: 14,
+          padding: 24,
+          background: audienceFile ? "#f0fcfb" : "#fff",
+          textAlign: "center",
+          marginBottom: 18,
+          cursor: "pointer",
+          transition: "all .2s ease",
+        }}
+        onClick={() => document.getElementById("csv-audience-input")?.click()}
+      >
+        <input
+          id="csv-audience-input"
+          type="file"
+          accept=".csv,text/csv"
+          style={{ display: "none" }}
+          onChange={async (e) => {
+            const file = e.target.files?.[0];
+            if (!file) return;
+            setAudienceFile(file);
+            setUploadingAudience(true);
+            const report = await api.importAudience("cmp_001", file);
+            setUploadingAudience(false);
+            setImportReport(report);
+            const contactsRes = await api.getContacts("cmp_001");
+            if (contactsRes?.items && contactsRes.items.length > 0) {
+              setContactsList(contactsRes.items);
+            }
+          }}
+        />
+        <div style={{ fontSize: 32, marginBottom: 4 }}>📋</div>
+        <b>{uploadingAudience ? "Importing & Encrypting contacts..." : audienceFile ? `Uploaded: ${audienceFile.name}` : "Upload Audience CSV File"}</b>
+        <div className="hint" style={{ marginTop: 4 }}>
+          {audienceFile ? "Click to upload a different CSV" : "Drop CSV file with columns: name, phone, language, segment, email"}
+        </div>
+        <button
+          className="btn p"
+          type="button"
+          style={{ width: "auto", margin: "12px auto 0", padding: "6px 16px", fontSize: 12 }}
+        >
+          Choose Contacts CSV
+        </button>
+        {importReport && (
+          <div style={{ marginTop: 12, display: "flex", justifyContent: "center", gap: 8, flexWrap: "wrap" }}>
+            <span className="pill g">✓ {importReport.imported} Contacts Imported</span>
+            {importReport.skipped > 0 && <span className="pill w">! {importReport.skipped} Skipped (Duplicates/DND)</span>}
+          </div>
+        )}
+      </div>
+
       <table>
-        <thead><tr><th>Name</th><th>Phone</th><th>Language</th><th>Segment</th><th>Status</th></tr></thead>
+        <thead>
+          <tr><th>Name</th><th>Phone (E.164 Masked)</th><th>Language</th><th>Segment</th><th>Status</th></tr>
+        </thead>
         <tbody>
-          {[
-            ["Anjali Menon", "+91 90••• ••011", "Malayalam", "Faculty", "Ready"],
-            ["Rahul Nair", "+91 90••• ••012", "Malayalam", "Students", "Ready"],
-            ["Fatima Sheikh", "+91 90••• ••013", "Hindi", "Alumni", "Ready"],
-            ["Meera Iyer", "+91 90••• ••014", "Tamil", "Faculty", "Ready"],
-            ["Arjun Verma", "+91 90••• ••015", "Hindi", "Students", "Ready"],
-          ].map((r, n) => <tr key={n}>{r.map((c, j) => <td key={j}>{c}</td>)}</tr>)}
+          {contactsList.slice(0, 6).map((c, idx) => (
+            <tr key={c.id || idx}>
+              <td><b>{c.name}</b></td>
+              <td>{c.phone_masked || c.phone || "+91 90••• ••011"}</td>
+              <td>{c.language === "ml" ? "Malayalam" : c.language === "hi" ? "Hindi" : c.language === "ta" ? "Tamil" : c.language || "English"}</td>
+              <td><span className="pill" style={{ background: "#eef2f5" }}>{c.segment || "General"}</span></td>
+              <td><span className="pill g">✓ Ready</span></td>
+            </tr>
+          ))}
         </tbody>
       </table>
-      <p><b>50 contacts imported.</b> Phone numbers encrypted at rest with Fernet AES; masked for display.</p>
+      <p style={{ fontSize: 13, color: "var(--mut)", marginTop: 8 }}>
+        <b>{contactsList.length} contacts loaded.</b> Phone numbers encrypted at rest with Fernet AES; masked for display under DPDP.
+      </p>
     </>,
     <>
       <h3>5. Review multilingual translations</h3>
@@ -627,7 +886,20 @@ function Dashboard({ onNewCampaign, onSignOut, user }) {
   const [channel, setChannel] = useState("Email");
   const [feedbackState, setFeedbackState] = useState("form");
 
-  const campaigns = ["Define", "Future of Work Summit", "SALT", "Relevant"];
+  const [dashContacts, setDashContacts] = useState(null);
+  const [serverCampaigns, setServerCampaigns] = useState([]);
+
+  useEffect(() => {
+    api.getCampaigns().then((res) => {
+      if (res && res.length > 0) setServerCampaigns(res);
+    });
+    api.getContacts("cmp_001").then((res) => {
+      if (res?.items && res.items.length > 0) setDashContacts(res.items);
+    });
+  }, []);
+
+  const defaultCampaigns = ["Define", "Future of Work Summit", "SALT", "Relevant"];
+  const campaigns = Array.from(new Set([...defaultCampaigns, ...serverCampaigns.map((c) => c.name)]));
 
   const subsections = [
     { id: "overview", label: "📊 Overview" },
@@ -772,23 +1044,66 @@ function Dashboard({ onNewCampaign, onSignOut, user }) {
             </div>
 
             <div className="card" style={{ marginTop: 20 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-                <h3 style={{ margin: 0 }}>Recent Contact Log (E.164 Masked)</h3>
-                <small className="hint">Protected under DPDP · Salted HMAC hashes</small>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, flexWrap: "wrap", gap: 10 }}>
+                <div>
+                  <h3 style={{ margin: 0 }}>Recent Contact Log (E.164 Masked)</h3>
+                  <small className="hint">Protected under DPDP · Salted HMAC hashes</small>
+                </div>
+                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                  <a
+                    href="/audience/template.csv"
+                    download="contacts-template.csv"
+                    className="btn-sm"
+                    style={{ textDecoration: "none", display: "inline-block" }}
+                  >
+                    ⬇ Template CSV
+                  </a>
+                  <button
+                    className="btn-sm"
+                    onClick={() => document.getElementById("dash-csv-input")?.click()}
+                  >
+                    + Upload Contacts CSV
+                  </button>
+                  <input
+                    id="dash-csv-input"
+                    type="file"
+                    accept=".csv,text/csv"
+                    style={{ display: "none" }}
+                    onChange={async (e) => {
+                      const file = e.target.files?.[0];
+                      if (!file) return;
+                      const report = await api.importAudience("cmp_001", file);
+                      alert(`Contacts CSV Imported:\n${report.imported} contacts added, ${report.skipped} skipped.`);
+                      const fresh = await api.getContacts("cmp_001");
+                      if (fresh?.items && fresh.items.length > 0) setDashContacts(fresh.items);
+                    }}
+                  />
+                </div>
               </div>
               <table>
                 <thead>
                   <tr><th>Contact</th><th>Phone Masked</th><th>Language</th><th>Outcome</th><th>Attempts</th><th>Channel</th></tr>
                 </thead>
                 <tbody>
-                  {[
-                    ["Priya Nair", "+91 •••• 4821", "English", "Confirmed", "1 of 3", "Call"],
-                    ["Rohan Mehta", "+91 •••• 1187", "Hindi", "Declined", "1 of 3", "Call"],
-                    ["Aisha Khan", "+91 •••• 7734", "English", "Callback", "2 of 3", "WhatsApp"],
-                    ["Deepak Rao", "+91 •••• 6629", "Malayalam", "No answer", "2 of 3", "Call"],
-                    ["Anjali Menon", "+91 •••• 4321", "Malayalam", "Confirmed", "1 of 3", "Call + SMS"],
-                  ].map((r, n) => (
-                    <tr key={n}>{r.map((c, j) => <td key={j}>{c}</td>)}</tr>
+                  {(dashContacts || [
+                    { name: "Priya Nair", phone_masked: "+91 •••• 4821", language: "English", last_outcome: "Confirmed", attempts: "1 of 3", channel: "Call" },
+                    { name: "Rohan Mehta", phone_masked: "+91 •••• 1187", language: "Hindi", last_outcome: "Declined", attempts: "1 of 3", channel: "Call" },
+                    { name: "Aisha Khan", phone_masked: "+91 •••• 7734", language: "English", last_outcome: "Callback", attempts: "2 of 3", channel: "WhatsApp" },
+                    { name: "Deepak Rao", phone_masked: "+91 •••• 6629", language: "Malayalam", last_outcome: "No answer", attempts: "2 of 3", channel: "Call" },
+                    { name: "Anjali Menon", phone_masked: "+91 •••• 4321", language: "Malayalam", last_outcome: "Confirmed", attempts: "1 of 3", channel: "Call + SMS" },
+                  ]).slice(0, 10).map((r, n) => (
+                    <tr key={r.id || n}>
+                      <td><b>{r.name}</b></td>
+                      <td>{r.phone_masked || "+91 •••• 4321"}</td>
+                      <td>{r.language === "ml" ? "Malayalam" : r.language === "hi" ? "Hindi" : r.language === "ta" ? "Tamil" : r.language || "English"}</td>
+                      <td>
+                        <span className={`pill ${r.last_outcome === "confirmed" || r.last_outcome === "Confirmed" ? "g" : r.last_outcome === "declined" || r.last_outcome === "Declined" ? "e" : "w"}`}>
+                          {r.last_outcome || "Confirmed"}
+                        </span>
+                      </td>
+                      <td>{r.attempts || "1 of 3"}</td>
+                      <td>{r.channel || "Call"}</td>
+                    </tr>
                   ))}
                 </tbody>
               </table>

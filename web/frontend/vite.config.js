@@ -17,6 +17,7 @@ export default defineConfig({
       '/s/': 'http://127.0.0.1:8000',
       '/health': 'http://127.0.0.1:8000',
       '/webhooks': 'http://127.0.0.1:8000',
+      '/files': 'http://127.0.0.1:8000',
     },
   },
 })
