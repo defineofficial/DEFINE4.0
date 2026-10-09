@@ -1,0 +1,961 @@
+diff --git a/.env.example b/.env.example
+index e4107b6..d8de388 100644
+--- a/.env.example
++++ b/.env.example
+@@ -56,3 +56,11 @@ EMAIL_FROM=
+ 
+ # --- Channels: keep true until the real accounts are approved ---
+ MOCK_CHANNELS=true
++
++# --- Private storage (posters and voice notes) ---
++# Folder for uploads. Leave empty to use api/uploads/ (git-ignored). Never serve this folder directly.
++STORAGE_DIR=
++# How long a file link works, in seconds (30 to 604800). 900 = 15 minutes.
++STORAGE_LINK_TTL_SECONDS=900
++# Public address of the API, put in front of file links sent by email or SMS. Example: https://api.example.org
++PUBLIC_API_URL=
+diff --git a/README.md b/README.md
+index a9f387b..180fa23 100644
+--- a/README.md
++++ b/README.md
+@@ -62,7 +62,7 @@ python scripts/export_openapi.py
+ 
+ 1. ~~PostgreSQL and login~~ Done: see `docs/database-setup-windows.md`. Next: move campaigns, then contacts, onto the database one endpoint at a time, and require sign-in on the organizer endpoints with the `current_organizer` dependency in `api/app/auth.py`.
+ 2. ~~Real CSV import~~ Done: see `docs/csv-format.md`, `api/app/csv_import.py` and the sample files in `docs/samples/`. It currently stores people in memory. Moving it to PostgreSQL means replacing `add_imported_contacts` in `api/app/mock_data.py` and adding the encrypted phone column.
+-3. Private storage for posters and voice notes with signed links.
++3. ~~Private storage for posters and voice notes with signed links~~ Done: see `api/app/storage.py`. Files sit in `STORAGE_DIR` and are only readable through `/files/...?exp=...&sig=...` links that expire (15 minutes by default). Voice note audio is stored for real; the draft it returns is still mock until step 4.
+ 4. Voice note pipeline: transcribe, extract event JSON, return an `EventDraft`.
+ 5. Translation with back-translation, then the template engine and the four preset seeds.
+ 6. Registration with personal tokens, then email, then payments in test mode.
+diff --git a/api/app/campaigns_db.py b/api/app/campaigns_db.py
+index 738d5eb..67ad32f 100644
+--- a/api/app/campaigns_db.py
++++ b/api/app/campaigns_db.py
+@@ -4,18 +4,20 @@ Every query here is scoped to the signed-in organizer, so one organizer can neve
+ another organizer's campaign, even by guessing its ID. A campaign that belongs to someone else
+ gets the same 404 as one that does not exist, so IDs cannot be probed.
+ """
++from typing import Optional
+ from uuid import UUID
+ 
+ import psycopg
+ from fastapi import HTTPException
+ from psycopg.types.json import Jsonb
+ 
++from . import storage
+ from .schemas import Campaign, CampaignCreate, EventDetails, Me
+ 
+ # psycopg returns arrays of custom enum types as text, so enum arrays are cast to text[] on the way out.
+ _SELECT = """
+     SELECT c.id, c.name, c.template_key, c.status::text AS status, c.event, c.languages,
+-           c.channels::text[] AS channels, c.created_at,
++           c.channels::text[] AS channels, c.created_at, c.poster_path,
+            (SELECT count(*) FROM campaign_contacts cc WHERE cc.campaign_id = c.id) AS contact_count
+     FROM campaigns c
+ """
+@@ -36,7 +38,7 @@ def _to_campaign(row: dict) -> Campaign:
+     return Campaign(
+         id=str(row["id"]), name=row["name"], template_key=row["template_key"], status=row["status"],
+         event=row["event"], languages=row["languages"], channels=row["channels"],
+-        poster_url=None,  # posters move to private storage in a later task
++        poster_url=storage.signed_path(row["poster_path"]) if row["poster_path"] else None,
+         contact_count=row["contact_count"], created_at=row["created_at"],
+     )
+ 
+@@ -87,3 +89,30 @@ def save_event_for(conn: psycopg.Connection, me: Me, campaign_id: str, event: Ev
+     campaign = get_for(conn, me, campaign_id)
+     conn.commit()
+     return campaign
++
++
++# Fixed column names, never built from user input.
++_ASSET_SQL = {
++    "poster": (
++        "SELECT poster_path AS old FROM campaigns WHERE id = %s AND organizer_id = %s FOR UPDATE",
++        "UPDATE campaigns SET poster_path = %s WHERE id = %s",
++    ),
++    "voice_note": (
++        "SELECT voice_note_path AS old FROM campaigns WHERE id = %s AND organizer_id = %s FOR UPDATE",
++        "UPDATE campaigns SET voice_note_path = %s WHERE id = %s",
++    ),
++}
++
++
++def set_asset_path(conn: psycopg.Connection, me: Me, campaign_id: str, kind: str, key: str) -> Optional[str]:
++    """Record a new private-storage key for the poster or voice note. Returns the previous key, if any,
++    so the caller can delete the old file. Only the owner's campaign can be changed."""
++    select_sql, update_sql = _ASSET_SQL[kind]
++    cid = _uuid(campaign_id)
++    row = conn.execute(select_sql, (cid, UUID(me.id))).fetchone()
++    if row is None:
++        conn.rollback()
++        raise _not_found()
++    conn.execute(update_sql, (key, cid))
++    conn.commit()
++    return row["old"]
+diff --git a/api/app/main.py b/api/app/main.py
+index 812fc4d..bb6c072 100644
+--- a/api/app/main.py
++++ b/api/app/main.py
+@@ -12,8 +12,7 @@ import psycopg
+ from fastapi import Depends, FastAPI, File, HTTPException, Query, UploadFile
+ from fastapi.middleware.cors import CORSMiddleware
+ from fastapi.responses import JSONResponse, Response
+-from . import ai_budget, auth, campaigns_db
+-from . import auth, campaigns_db
++from . import ai_budget, auth, campaigns_db, storage, storage_routes
+ from . import db as database
+ from . import mock_data as db
+ from .csv_import import CsvImportError, parse_contacts_csv
+@@ -48,13 +47,28 @@ def ai_budget_exceeded(_request, exc: ai_budget.AiBudgetExceeded) -> JSONRespons
+     return JSONResponse(status_code=429, content={"detail": str(exc)})
+ # ---------- helpers ----------
+ 
++_MOCK_ASSETS: dict[tuple[str, str], str] = {}  # (campaign_id, "poster" | "voice_note") -> storage key, mock mode only
++
++
+ def _campaign(campaign_id: str) -> Campaign:
+     c = db.CAMPAIGNS.get(campaign_id)
+     if not c:
+         raise HTTPException(404, "Campaign not found")
++    poster_key = _MOCK_ASSETS.get((campaign_id, "poster"))
++    if poster_key:  # links expire, so hand out a fresh one each time
++        c.poster_url = storage.signed_path(poster_key)
+     return c
+ 
+ 
++async def _store_upload(kind: str, campaign_id: str, file: UploadFile) -> storage.StoredFile:
++    """Read an upload (never more than the limit plus one byte) and put it in private storage."""
++    data = await file.read(storage.RULES[kind].max_bytes + 1)
++    try:
++        return storage.save(kind, campaign_id, data)
++    except storage.StorageError as err:
++        raise HTTPException(err.status_code, str(err)) from None
++
++
+ def _contacts(campaign_id: str) -> list[Contact]:
+     _campaign(campaign_id)
+     return db.CONTACTS.get(campaign_id, [])
+@@ -117,6 +131,7 @@ def poster() -> Response:
+ # ---------- auth (real when DATABASE_URL is set, mock otherwise) ----------
+ 
+ app.include_router(auth.router)
++app.include_router(storage_routes.router)
+ 
+ 
+ # ---------- templates ----------
+@@ -134,7 +149,7 @@ def list_campaigns(
+ ) -> list[Campaign]:
+     """Your campaigns only. Needs login when the database is on."""
+     if conn is None:
+-        return list(db.CAMPAIGNS.values())
++        return [_campaign(cid) for cid in db.CAMPAIGNS]
+     return campaigns_db.list_for(conn, me)
+ 
+ 
+@@ -181,16 +196,56 @@ def save_event(
+ 
+ 
+ @app.post("/campaigns/{campaign_id}/poster", response_model=PosterResult, tags=["Campaigns"])
+-async def upload_poster(campaign_id: str, file: UploadFile = File(...)) -> PosterResult:
+-    camp = _campaign(campaign_id)
+-    camp.poster_url = "/mock/poster.svg"
+-    return PosterResult(poster_url=camp.poster_url)
++async def upload_poster(
++    campaign_id: str, file: UploadFile = File(...), me: Me = Depends(auth.current_organizer),
++    conn: Optional[psycopg.Connection] = Depends(database.get_conn),
++) -> PosterResult:
++    """Real. Stores the poster privately (PNG, JPEG, WebP or PDF, up to 10 MB).
++
++    `poster_url` is a signed link that stops working after a few minutes. Fetch the campaign again for a new one.
++    """
++    if conn is None:
++        _campaign(campaign_id)
++    else:
++        campaigns_db.get_for(conn, me, campaign_id)  # 404 unless it is this organizer's campaign
++    stored = await _store_upload("poster", campaign_id, file)
++    if conn is None:
++        storage.delete(_MOCK_ASSETS.get((campaign_id, "poster")))
++        _MOCK_ASSETS[(campaign_id, "poster")] = stored.key
++    else:
++        try:
++            old_key = campaigns_db.set_asset_path(conn, me, campaign_id, "poster", stored.key)
++        except Exception:
++            storage.delete(stored.key)  # do not leave an orphan file behind
++            raise
++        storage.delete(old_key)
++    return PosterResult(poster_url=storage.signed_path(stored.key))
+ 
+ 
+ @app.post("/campaigns/{campaign_id}/voice-note", response_model=EventDraft, tags=["Campaigns"])
+-async def upload_voice_note(campaign_id: str, file: UploadFile = File(...)) -> EventDraft:
+-    """Mock: ignores the audio and returns a fixed draft. Real version transcribes then extracts."""
+-    _campaign(campaign_id)
++async def upload_voice_note(
++    campaign_id: str, file: UploadFile = File(...), me: Me = Depends(auth.current_organizer),
++    conn: Optional[psycopg.Connection] = Depends(database.get_conn),
++) -> EventDraft:
++    """The audio is stored privately for real (WAV, MP3, M4A, OGG, WebM or FLAC, up to 25 MB).
++
++    The draft is still mock: transcription and extraction come in the voice note pipeline task.
++    """
++    if conn is None:
++        _campaign(campaign_id)
++    else:
++        campaigns_db.get_for(conn, me, campaign_id)
++    stored = await _store_upload("voice_note", campaign_id, file)
++    if conn is None:
++        storage.delete(_MOCK_ASSETS.get((campaign_id, "voice_note")))
++        _MOCK_ASSETS[(campaign_id, "voice_note")] = stored.key
++    else:
++        try:
++            old_key = campaigns_db.set_asset_path(conn, me, campaign_id, "voice_note", stored.key)
++        except Exception:
++            storage.delete(stored.key)
++            raise
++        storage.delete(old_key)
+     return EventDraft(
+         transcript=("We are holding an AI in Healthcare seminar on the fourteenth of November at ten in the "
+                     "morning, in the Seminar Hall, Block A, in Kochi. Registration is five hundred rupees."),
+diff --git a/api/app/storage.py b/api/app/storage.py
+new file mode 100644
+index 0000000..6e2296b
+--- /dev/null
++++ b/api/app/storage.py
+@@ -0,0 +1,262 @@
++"""Private storage for posters and voice notes, served only through signed, expiring links.
++
++Nothing here is public. Files live in STORAGE_DIR (default: api/uploads/, git-ignored) and no static
++route points at that folder. The only way to read a file over HTTP is a link made by `signed_path`:
++
++    /files/posters/<campaign>/<random>.png?exp=1767225600&sig=<hmac>
++
++The link is valid until `exp` (Unix seconds) and cannot be changed: the signature covers the file key and
++the expiry, so editing either one, or asking for a different file, fails.
++
++Choices worth knowing
++- Uploads are checked by their first bytes, never by the filename or the Content-Type the browser sends.
++  Only the formats in RULES are accepted. SVG is left out on purpose, because an SVG can carry script.
++- File names are made by the server (random), so a user-supplied name can never reach the disk path.
++- Signing uses a key derived from SECRET_KEY for this purpose only, so a link signature can never be
++  replayed as a login token or the other way round.
++- Links expire after STORAGE_LINK_TTL_SECONDS (default 900 = 15 minutes), never less than 30 seconds
++  or more than 7 days.
++- The module uses only the standard library, so it can be tested without FastAPI.
++
++The S3-compatible version (for deployment) would keep the same functions and swap `LocalStorage`.
++"""
++import hashlib
++import hmac
++import logging
++import os
++import re
++import secrets
++import time
++from dataclasses import dataclass
++from pathlib import Path
++from typing import Optional
++from urllib.parse import quote
++from uuid import uuid4
++
++log = logging.getLogger("eventreach.storage")
++
++MB = 1024 * 1024
++DEFAULT_TTL_SECONDS = 15 * 60
++MIN_TTL_SECONDS = 30
++MAX_TTL_SECONDS = 7 * 24 * 3600
++_SIGNING_PURPOSE = b"eventreach/storage-link/v1"
++_SAFE_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
++_SAFE_KEY = re.compile(
++    r"^(posters|voice-notes)/[A-Za-z0-9_-]{1,64}/[0-9a-f]{32}\.(png|jpg|webp|pdf|wav|mp3|m4a|ogg|webm|flac)$"
++)
++
++
++# ---------- errors (each carries a plain sentence the API can return) ----------
++
++class StorageError(Exception):
++    status_code = 400
++
++
++class UnsupportedFile(StorageError):
++    status_code = 415
++
++
++class FileTooLarge(StorageError):
++    status_code = 413
++
++
++class EmptyFile(StorageError):
++    status_code = 422
++
++
++class LinkInvalid(StorageError):
++    status_code = 403
++
++
++class LinkExpired(StorageError):
++    status_code = 410
++
++
++class FileMissing(StorageError):
++    status_code = 404
++
++
++# ---------- what is accepted ----------
++
++@dataclass(frozen=True)
++class Rule:
++    folder: str
++    max_bytes: int
++    label: str        # shown in error messages
++
++
++# 10 MB posters and a 3-minute voice note (a 3-minute stereo WAV at 44.1 kHz is about 31 MB, so the
++# limit is 25 MB; ask the browser to record mono or compressed audio).
++RULES = {
++    "poster": Rule("posters", 10 * MB, "poster (PNG, JPEG, WebP or PDF)"),
++    "voice_note": Rule("voice-notes", 25 * MB, "voice note (WAV, MP3, M4A, OGG, WebM or FLAC)"),
++}
++
++# extension -> content type served back
++CONTENT_TYPES = {
++    "png": "image/png", "jpg": "image/jpeg", "webp": "image/webp", "pdf": "application/pdf",
++    "wav": "audio/wav", "mp3": "audio/mpeg", "m4a": "audio/mp4", "ogg": "audio/ogg",
++    "webm": "audio/webm", "flac": "audio/flac",
++}
++_ALLOWED_EXTENSIONS = {
++    "poster": {"png", "jpg", "webp", "pdf"},
++    "voice_note": {"wav", "mp3", "m4a", "ogg", "webm", "flac"},
++}
++
++
++def sniff_extension(data: bytes) -> Optional[str]:
++    """Work out the real file type from its first bytes. None when it is not a format we accept."""
++    head = data[:16]
++    if head.startswith(b"\x89PNG\r\n\x1a\n"):
++        return "png"
++    if head.startswith(b"\xff\xd8\xff"):
++        return "jpg"
++    if head.startswith(b"RIFF") and head[8:12] == b"WEBP":
++        return "webp"
++    if head.startswith(b"RIFF") and head[8:12] == b"WAVE":
++        return "wav"
++    if head.startswith(b"%PDF-"):
++        return "pdf"
++    if head.startswith(b"OggS"):
++        return "ogg"
++    if head.startswith(b"fLaC"):
++        return "flac"
++    if head.startswith(b"\x1a\x45\xdf\xa3"):
++        return "webm"
++    if head[4:8] == b"ftyp":
++        return "m4a"
++    if head.startswith(b"ID3") or (len(head) >= 2 and head[0] == 0xFF and head[1] & 0xE0 == 0xE0):
++        return "mp3"
++    return None
++
++
++# ---------- saving and reading ----------
++
++def storage_root() -> Path:
++    configured = os.getenv("STORAGE_DIR", "").strip()
++    root = Path(configured) if configured else Path(__file__).resolve().parent.parent / "uploads"
++    return root.resolve()
++
++
++@dataclass(frozen=True)
++class StoredFile:
++    key: str
++    content_type: str
++    size: int
++
++
++def save(kind: str, owner_id: str, data: bytes) -> StoredFile:
++    """Check an upload and write it to private storage. `owner_id` is the campaign ID.
++
++    Raises EmptyFile, FileTooLarge or UnsupportedFile with a plain sentence for the organizer.
++    """
++    rule = RULES[kind]
++    if not _SAFE_ID.fullmatch(owner_id):
++        raise StorageError("That campaign ID cannot be used for storage.")
++    if not data:
++        raise EmptyFile("The file is empty. Choose the file again.")
++    if len(data) > rule.max_bytes:
++        raise FileTooLarge(f"That file is over the {rule.max_bytes // MB} MB limit for a {rule.label}.")
++    ext = sniff_extension(data)
++    if ext is None or ext not in _ALLOWED_EXTENSIONS[kind]:
++        raise UnsupportedFile(f"That file type is not supported. Upload a {rule.label}.")
++
++    key = f"{rule.folder}/{owner_id}/{uuid4().hex}.{ext}"
++    path = _path_for(key)
++    path.parent.mkdir(parents=True, exist_ok=True)
++    tmp = path.with_suffix(path.suffix + ".part")
++    tmp.write_bytes(data)
++    os.replace(tmp, path)  # a half-written file is never visible under its real name
++    return StoredFile(key=key, content_type=CONTENT_TYPES[ext], size=len(data))
++
++
++def _path_for(key: str) -> Path:
++    """Disk path for a key. Refuses anything that is not a key this module could have made."""
++    if not _SAFE_KEY.fullmatch(key):
++        raise FileMissing("File not found.")
++    root = storage_root()
++    path = (root / key).resolve()
++    if root not in path.parents:  # belt and braces against any path trick
++        raise FileMissing("File not found.")
++    return path
++
++
++def locate(key: str) -> tuple[Path, str]:
++    """Path and content type of a stored file. Raises FileMissing."""
++    path = _path_for(key)
++    if not path.is_file():
++        raise FileMissing("File not found.")
++    return path, CONTENT_TYPES[path.suffix.lstrip(".")]
++
++
++def read_bytes(key: str) -> bytes:
++    """For server-side use, such as sending the audio to transcription. No link needed."""
++    return locate(key)[0].read_bytes()
++
++
++def delete(key: Optional[str]) -> None:
++    """Remove a file. Quietly does nothing for an empty or unknown key."""
++    if not key:
++        return
++    try:
++        _path_for(key).unlink(missing_ok=True)
++    except StorageError:
++        log.warning("Ignored delete of an invalid storage key")
++
++
++# ---------- signed, expiring links ----------
++
++_temporary_secret = secrets.token_bytes(32)
++_warned = False
++
++
++def _signing_key() -> bytes:
++    global _warned
++    secret = os.getenv("SECRET_KEY", "")
++    if len(secret) >= 32:
++        base = secret.encode()
++    else:
++        if not _warned:
++            log.warning("SECRET_KEY is missing or shorter than 32 characters. File links use a temporary key, "
++                        "so every link stops working when the server restarts.")
++            _warned = True
++        base = _temporary_secret
++    return hmac.new(base, _SIGNING_PURPOSE, hashlib.sha256).digest()
++
++
++def link_ttl_seconds() -> int:
++    try:
++        ttl = int(os.getenv("STORAGE_LINK_TTL_SECONDS", "").strip())
++    except ValueError:
++        return DEFAULT_TTL_SECONDS
++    return max(MIN_TTL_SECONDS, min(ttl, MAX_TTL_SECONDS))
++
++
++def _signature(key: str, expires: int) -> str:
++    return hmac.new(_signing_key(), f"{key}\n{expires}".encode(), hashlib.sha256).hexdigest()
++
++
++def signed_path(key: str, ttl: Optional[int] = None, now: Optional[float] = None) -> str:
++    """A relative link, such as /files/posters/abc/0123.png?exp=...&sig=..., valid for `ttl` seconds."""
++    _path_for(key)  # refuse to sign a key this module did not make
++    seconds = link_ttl_seconds() if ttl is None else max(MIN_TTL_SECONDS, min(int(ttl), MAX_TTL_SECONDS))
++    expires = int((time.time() if now is None else now) + seconds)
++    return f"/files/{quote(key)}?exp={expires}&sig={_signature(key, expires)}"
++
++
++def signed_url(key: str, ttl: Optional[int] = None, now: Optional[float] = None) -> str:
++    """Like signed_path, with PUBLIC_API_URL in front when it is set (needed for email and SMS links)."""
++    base = os.getenv("PUBLIC_API_URL", "").strip().rstrip("/")
++    return base + signed_path(key, ttl, now)
++
++
++def verify(key: str, exp: str, sig: str, now: Optional[float] = None) -> None:
++    """Accept a link or raise. The signature is checked first, so a forged link learns nothing about expiry."""
++    try:
++        expires = int(exp)
++    except (TypeError, ValueError):
++        raise LinkInvalid("This link is not valid.") from None
++    if not isinstance(sig, str) or not hmac.compare_digest(_signature(key, expires), sig):
++        raise LinkInvalid("This link is not valid.")
++    if (time.time() if now is None else now) >= expires:
++        raise LinkExpired("This link has expired. Ask for a new one.")
+diff --git a/api/app/storage_routes.py b/api/app/storage_routes.py
+new file mode 100644
+index 0000000..139772d
+--- /dev/null
++++ b/api/app/storage_routes.py
+@@ -0,0 +1,30 @@
++"""The one public door to private storage: GET /files/{key}?exp=...&sig=..."""
++from fastapi import APIRouter, HTTPException, Query
++from fastapi.responses import FileResponse
++
++from . import storage
++
++router = APIRouter(tags=["Files"])
++
++
++@router.get("/files/{key:path}", include_in_schema=False)
++def get_file(key: str, exp: str = Query(""), sig: str = Query("")) -> FileResponse:
++    """Serve a stored file when the link is genuine and has not expired.
++
++    403 for a link that was changed or forged, 410 for an expired one, 404 when the file is gone.
++    """
++    try:
++        storage.verify(key, exp, sig)
++        path, content_type = storage.locate(key)
++    except storage.StorageError as err:
++        raise HTTPException(err.status_code, str(err)) from None
++    return FileResponse(
++        path, media_type=content_type,
++        headers={
++            "Cache-Control": "private, no-store",          # a saved copy must not outlive the link
++            "X-Content-Type-Options": "nosniff",
++            "Content-Security-Policy": "default-src 'none'; sandbox",
++            "Referrer-Policy": "no-referrer",
++            "Content-Disposition": "inline",
++        },
++    )
+diff --git a/api/tests/test_storage.py b/api/tests/test_storage.py
+new file mode 100644
+index 0000000..18552a0
+--- /dev/null
++++ b/api/tests/test_storage.py
+@@ -0,0 +1,217 @@
++"""Private storage and signed links. Needs no database and no FastAPI."""
++import pytest
++
++from app import storage
++from app.storage import (EmptyFile, FileMissing, FileTooLarge, LinkExpired, LinkInvalid, UnsupportedFile)
++
++PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 32
++JPEG = b"\xff\xd8\xff\xe0" + b"\x00" * 32
++PDF = b"%PDF-1.7\n" + b"\x00" * 32
++WAV = b"RIFF\x24\x00\x00\x00WAVEfmt " + b"\x00" * 32
++MP3 = b"ID3\x04\x00" + b"\x00" * 32
++WEBM = b"\x1a\x45\xdf\xa3" + b"\x00" * 32
++M4A = b"\x00\x00\x00\x20ftypM4A " + b"\x00" * 32
++SVG = b'<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>'
++NOW = 1_800_000_000.0
++
++
++@pytest.fixture(autouse=True)
++def private_folder(tmp_path, monkeypatch):
++    monkeypatch.setenv("STORAGE_DIR", str(tmp_path / "store"))
++    monkeypatch.setenv("SECRET_KEY", "k" * 40)
++    monkeypatch.delenv("STORAGE_LINK_TTL_SECONDS", raising=False)
++    monkeypatch.delenv("PUBLIC_API_URL", raising=False)
++
++
++def query(link: str) -> dict:
++    return dict(p.split("=", 1) for p in link.split("?", 1)[1].split("&"))
++
++
++# ---------- saving ----------
++
++@pytest.mark.parametrize("kind,data,ext", [
++    ("poster", PNG, "png"), ("poster", JPEG, "jpg"), ("poster", PDF, "pdf"),
++    ("voice_note", WAV, "wav"), ("voice_note", MP3, "mp3"), ("voice_note", WEBM, "webm"), ("voice_note", M4A, "m4a"),
++])
++def test_accepted_files_are_saved_under_a_random_name(kind, data, ext):
++    stored = storage.save(kind, "cmp_001", data)
++    assert stored.key.endswith("." + ext) and stored.size == len(data)
++    assert storage.read_bytes(stored.key) == data
++    assert stored.key.startswith(("posters/cmp_001/", "voice-notes/cmp_001/"))
++
++
++def test_type_is_decided_by_content_not_by_name_or_header():
++    with pytest.raises(UnsupportedFile):
++        storage.save("poster", "cmp_001", b"just some text pretending to be a picture.png")
++
++
++def test_svg_is_refused_because_it_can_carry_script():
++    with pytest.raises(UnsupportedFile):
++        storage.save("poster", "cmp_001", SVG)
++
++
++def test_audio_is_not_accepted_as_a_poster_and_the_reverse():
++    with pytest.raises(UnsupportedFile):
++        storage.save("poster", "cmp_001", WAV)
++    with pytest.raises(UnsupportedFile):
++        storage.save("voice_note", "cmp_001", PNG)
++
++
++def test_empty_file_is_refused():
++    with pytest.raises(EmptyFile):
++        storage.save("poster", "cmp_001", b"")
++
++
++def test_poster_over_10_mb_is_refused_but_exactly_10_mb_is_fine():
++    limit = storage.RULES["poster"].max_bytes
++    assert storage.save("poster", "cmp_001", PNG + b"\x00" * (limit - len(PNG))).size == limit
++    with pytest.raises(FileTooLarge):
++        storage.save("poster", "cmp_001", PNG + b"\x00" * (limit - len(PNG) + 1))
++
++
++@pytest.mark.parametrize("bad_id", ["../etc", "a/b", "", "x" * 65, "a b", "..", "cmp\x00", "cmp_001\n"])
++def test_campaign_id_cannot_steer_the_path(bad_id):
++    with pytest.raises(storage.StorageError):
++        storage.save("poster", bad_id, PNG)
++
++
++def test_nothing_is_written_outside_the_storage_folder(tmp_path):
++    storage.save("poster", "cmp_001", PNG)
++    outside = [p for p in tmp_path.rglob("*") if p.is_file() and "store" not in p.parts]
++    assert outside == []
++
++
++def test_two_uploads_never_share_a_key():
++    assert storage.save("poster", "cmp_001", PNG).key != storage.save("poster", "cmp_001", PNG).key
++
++
++# ---------- keys ----------
++
++@pytest.mark.parametrize("key", [
++    "../../etc/passwd", "posters/../../x.png", "/etc/passwd", "posters/cmp_001/notarandomname.png",
++    "other/cmp_001/" + "a" * 32 + ".png", "posters/cmp_001/" + "a" * 32 + ".png\n", "posters/cmp_001/" + "a" * 32 + ".exe", "posters\\cmp_001\\x",
++])
++def test_keys_that_this_module_did_not_make_are_not_found_or_signed(key):
++    with pytest.raises(FileMissing):
++        storage.locate(key)
++    with pytest.raises(FileMissing):
++        storage.signed_path(key)
++
++
++def test_delete_removes_the_file_and_ignores_junk():
++    stored = storage.save("poster", "cmp_001", PNG)
++    storage.delete(stored.key)
++    with pytest.raises(FileMissing):
++        storage.locate(stored.key)
++    storage.delete(stored.key)        # already gone
++    storage.delete(None)
++    storage.delete("../../etc/passwd")
++
++
++# ---------- signed links ----------
++
++def test_fresh_link_is_accepted_and_serves_the_right_type():
++    stored = storage.save("poster", "cmp_001", PNG)
++    link = storage.signed_path(stored.key, now=NOW)
++    q = query(link)
++    storage.verify(stored.key, q["exp"], q["sig"], now=NOW + 60)
++    assert storage.locate(stored.key)[1] == "image/png"
++    assert link.startswith("/files/" + stored.key + "?exp=")
++
++
++def test_default_lifetime_is_15_minutes_and_can_be_set():
++    key = storage.save("poster", "cmp_001", PNG).key
++    assert int(query(storage.signed_path(key, now=NOW))["exp"]) == NOW + 900
++    assert int(query(storage.signed_path(key, ttl=120, now=NOW))["exp"]) == NOW + 120
++
++
++def test_lifetime_is_clamped():
++    key = storage.save("poster", "cmp_001", PNG).key
++    assert int(query(storage.signed_path(key, ttl=1, now=NOW))["exp"]) == NOW + 30
++    assert int(query(storage.signed_path(key, ttl=10**9, now=NOW))["exp"]) == NOW + 7 * 24 * 3600
++
++
++def test_env_lifetime_is_used_and_junk_falls_back(monkeypatch):
++    key = storage.save("poster", "cmp_001", PNG).key
++    monkeypatch.setenv("STORAGE_LINK_TTL_SECONDS", "300")
++    assert int(query(storage.signed_path(key, now=NOW))["exp"]) == NOW + 300
++    monkeypatch.setenv("STORAGE_LINK_TTL_SECONDS", "soon")
++    assert int(query(storage.signed_path(key, now=NOW))["exp"]) == NOW + 900
++
++
++def test_expired_link_is_refused_at_and_after_the_expiry_second():
++    key = storage.save("poster", "cmp_001", PNG).key
++    q = query(storage.signed_path(key, now=NOW))
++    storage.verify(key, q["exp"], q["sig"], now=NOW + 899)
++    with pytest.raises(LinkExpired):
++        storage.verify(key, q["exp"], q["sig"], now=NOW + 900)
++    with pytest.raises(LinkExpired):
++        storage.verify(key, q["exp"], q["sig"], now=NOW + 10**6)
++
++
++def test_changing_the_expiry_breaks_the_link():
++    key = storage.save("poster", "cmp_001", PNG).key
++    q = query(storage.signed_path(key, now=NOW))
++    with pytest.raises(LinkInvalid):
++        storage.verify(key, str(int(q["exp"]) + 86400), q["sig"], now=NOW)
++
++
++def test_a_link_cannot_be_used_for_a_different_file():
++    a = storage.save("poster", "cmp_001", PNG).key
++    b = storage.save("poster", "cmp_001", PNG).key
++    q = query(storage.signed_path(a, now=NOW))
++    with pytest.raises(LinkInvalid):
++        storage.verify(b, q["exp"], q["sig"], now=NOW)
++
++
++@pytest.mark.parametrize("sig", ["", "0" * 64, "zzz", "A" * 10])
++def test_bad_signatures_are_refused(sig):
++    key = storage.save("poster", "cmp_001", PNG).key
++    q = query(storage.signed_path(key, now=NOW))
++    with pytest.raises(LinkInvalid):
++        storage.verify(key, q["exp"], sig, now=NOW)
++
++
++@pytest.mark.parametrize("exp", ["", "abc", "1.5", None])
++def test_bad_expiry_values_are_refused(exp):
++    key = storage.save("poster", "cmp_001", PNG).key
++    with pytest.raises(LinkInvalid):
++        storage.verify(key, exp, "0" * 64, now=NOW)
++
++
++def test_forged_link_gets_invalid_not_expired():
++    """A forger must not learn whether a guessed expiry was in the past."""
++    key = storage.save("poster", "cmp_001", PNG).key
++    with pytest.raises(LinkInvalid):
++        storage.verify(key, str(int(NOW) - 5000), "0" * 64, now=NOW)
++
++
++def test_links_stop_working_when_the_secret_changes(monkeypatch):
++    key = storage.save("poster", "cmp_001", PNG).key
++    q = query(storage.signed_path(key, now=NOW))
++    monkeypatch.setenv("SECRET_KEY", "z" * 40)
++    with pytest.raises(LinkInvalid):
++        storage.verify(key, q["exp"], q["sig"], now=NOW)
++
++
++def test_signing_key_is_not_the_raw_secret():
++    import hashlib
++    import hmac
++    key = storage.save("poster", "cmp_001", PNG).key
++    q = query(storage.signed_path(key, now=NOW))
++    naive = hmac.new(b"k" * 40, f"{key}\n{q['exp']}".encode(), hashlib.sha256).hexdigest()
++    assert q["sig"] != naive   # a login-token key cannot be turned into a file link
++
++
++def test_short_secret_still_works_for_this_run_only(monkeypatch):
++    monkeypatch.setenv("SECRET_KEY", "short")
++    key = storage.save("poster", "cmp_001", PNG).key
++    q = query(storage.signed_path(key, now=NOW))
++    storage.verify(key, q["exp"], q["sig"], now=NOW)
++
++
++def test_signed_url_adds_the_public_base_when_set(monkeypatch):
++    key = storage.save("poster", "cmp_001", PNG).key
++    assert storage.signed_url(key, now=NOW).startswith("/files/")
++    monkeypatch.setenv("PUBLIC_API_URL", "https://api.example.org/")
++    assert storage.signed_url(key, now=NOW).startswith("https://api.example.org/files/posters/")
+diff --git a/api/tests/test_storage_db.py b/api/tests/test_storage_db.py
+new file mode 100644
+index 0000000..4633e66
+--- /dev/null
++++ b/api/tests/test_storage_db.py
+@@ -0,0 +1,92 @@
++"""Poster and voice note storage against a real PostgreSQL. Skipped unless TEST_DATABASE_URL is set.
++
++The main point: organizer B can never upload to, or learn anything about, organizer A's campaign.
++"""
++import os
++from uuid import uuid4
++
++import pytest
++from fastapi.testclient import TestClient
++
++from app import db, dbsetup, storage
++from app.main import app
++
++TEST_URL = os.getenv("TEST_DATABASE_URL", "").strip()
++pytestmark = [
++    pytest.mark.database,
++    pytest.mark.skipif(not TEST_URL, reason="Set TEST_DATABASE_URL to run the database tests"),
++]
++
++ASHA = {"name": "Asha Thomas", "email": "asha@example.com", "password": "correct-horse-1"}
++BEN = {"name": "Ben Joseph", "email": "ben@example.com", "password": "battery-staple-2"}
++PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 64
++WAV = b"RIFF\x24\x00\x00\x00WAVEfmt " + b"\x00" * 64
++
++
++@pytest.fixture
++def client(tmp_path, monkeypatch):
++    monkeypatch.setenv("DATABASE_URL", TEST_URL)
++    monkeypatch.setenv("STORAGE_DIR", str(tmp_path / "store"))
++    monkeypatch.setenv("SECRET_KEY", "k" * 40)
++    db.close_pool()
++    dbsetup.setup(TEST_URL, reset=True)
++    with TestClient(app) as c:
++        yield c
++    db.close_pool()
++
++
++def sign_in(client, creds) -> dict:
++    token = client.post("/auth/register", json=creds).json()["access_token"]
++    return {"Authorization": f"Bearer {token}"}
++
++
++def new_campaign(client, headers) -> str:
++    return client.post("/campaigns", json={"name": "AI Seminar", "template_key": "seminar_invite"},
++                       headers=headers).json()["id"]
++
++
++def up(client, headers, cid, what="poster"):
++    path, name, data = (("poster", "p.png", PNG) if what == "poster" else ("voice-note", "v.wav", WAV))
++    return client.post(f"/campaigns/{cid}/{path}", files={"file": (name, data)}, headers=headers)
++
++
++def test_uploads_need_login(client):
++    fake = str(uuid4())
++    assert client.post(f"/campaigns/{fake}/poster", files={"file": ("p.png", PNG)}).status_code == 401
++    assert client.post(f"/campaigns/{fake}/voice-note", files={"file": ("v.wav", WAV)}).status_code == 401
++
++
++def test_poster_is_saved_on_the_campaign_and_shown_with_a_fresh_link(client):
++    h = sign_in(client, ASHA)
++    cid = new_campaign(client, h)
++    link = up(client, h, cid).json()["poster_url"]
++    assert client.get(link).content == PNG                       # the link needs no login, only the signature
++    shown = client.get(f"/campaigns/{cid}", headers=h).json()["poster_url"]
++    assert shown and client.get(shown).content == PNG
++    assert client.get("/campaigns", headers=h).json()[0]["poster_url"]
++
++
++def test_another_organizer_cannot_upload_to_my_campaign(client, tmp_path):
++    asha, ben = sign_in(client, ASHA), sign_in(client, BEN)
++    cid = new_campaign(client, asha)
++    assert up(client, ben, cid).status_code == 404
++    assert up(client, ben, cid, "voice").status_code == 404
++    assert client.get(f"/campaigns/{cid}", headers=asha).json()["poster_url"] is None
++    assert not (tmp_path / "store").exists()
++
++
++def test_replacing_a_poster_removes_the_old_file(client):
++    h = sign_in(client, ASHA)
++    cid = new_campaign(client, h)
++    first = up(client, h, cid).json()["poster_url"]
++    up(client, h, cid)
++    assert client.get(first).status_code == 404
++
++
++def test_voice_note_path_is_recorded(client):
++    h = sign_in(client, ASHA)
++    cid = new_campaign(client, h)
++    assert up(client, h, cid, "voice").status_code == 200
++    with db.get_pool().connection() as conn:
++        row = conn.execute("SELECT voice_note_path FROM campaigns WHERE id = %s", (cid,)).fetchone()
++    assert row["voice_note_path"].startswith("voice-notes/") and storage.read_bytes(row["voice_note_path"]) == WAV
+diff --git a/api/tests/test_storage_endpoints.py b/api/tests/test_storage_endpoints.py
+new file mode 100644
+index 0000000..088ae2a
+--- /dev/null
++++ b/api/tests/test_storage_endpoints.py
+@@ -0,0 +1,95 @@
++"""Poster and voice note uploads and the signed-link route, in mock mode (no database needed)."""
++import pytest
++from fastapi.testclient import TestClient
++
++from app import storage
++from app.main import app, _MOCK_ASSETS
++
++PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 64
++WAV = b"RIFF\x24\x00\x00\x00WAVEfmt " + b"\x00" * 64
++
++
++@pytest.fixture
++def client(tmp_path, monkeypatch):
++    monkeypatch.setenv("STORAGE_DIR", str(tmp_path / "store"))
++    monkeypatch.setenv("SECRET_KEY", "k" * 40)
++    _MOCK_ASSETS.clear()
++    with TestClient(app) as c:
++        yield c
++    _MOCK_ASSETS.clear()
++
++
++def upload(client, path, name, data, content_type):
++    return client.post(path, files={"file": (name, data, content_type)})
++
++
++def test_poster_upload_returns_a_link_that_serves_the_file(client):
++    r = upload(client, "/campaigns/cmp_001/poster", "poster.png", PNG, "image/png")
++    assert r.status_code == 200
++    link = r.json()["poster_url"]
++    assert link.startswith("/files/posters/cmp_001/")
++    got = client.get(link)
++    assert got.status_code == 200 and got.content == PNG
++    assert got.headers["content-type"] == "image/png"
++    assert got.headers["cache-control"] == "private, no-store"
++    assert got.headers["x-content-type-options"] == "nosniff"
++
++
++def test_campaign_shows_a_fresh_link_after_upload(client):
++    upload(client, "/campaigns/cmp_001/poster", "p.png", PNG, "image/png")
++    url = client.get("/campaigns/cmp_001").json()["poster_url"]
++    assert client.get(url).status_code == 200
++
++
++def test_replacing_the_poster_deletes_the_old_file(client):
++    first = upload(client, "/campaigns/cmp_001/poster", "a.png", PNG, "image/png").json()["poster_url"]
++    second = upload(client, "/campaigns/cmp_001/poster", "b.png", PNG + b"1", "image/png").json()["poster_url"]
++    assert first != second
++    assert client.get(first).status_code == 404
++    assert client.get(second).status_code == 200
++
++
++def test_tampered_link_is_403_and_expired_link_is_410(client, monkeypatch):
++    link = upload(client, "/campaigns/cmp_001/poster", "p.png", PNG, "image/png").json()["poster_url"]
++    path, query = link.split("?")
++    exp, sig = [p.split("=")[1] for p in query.split("&")]
++    assert client.get(f"{path}?exp={int(exp) + 9999}&sig={sig}").status_code == 403
++    assert client.get(f"{path}?exp={exp}").status_code == 403           # no signature at all
++    assert client.get(path).status_code == 403
++    monkeypatch.setattr(storage.time, "time", lambda: int(exp) + 1)
++    assert client.get(link).status_code == 410
++
++
++def test_a_valid_signature_cannot_reach_files_outside_storage(client):
++    # Even if someone could sign it, a key that is not ours is never served.
++    assert client.get("/files/../../etc/passwd?exp=1&sig=x").status_code in (403, 404)
++    assert client.get("/files/posters/cmp_001/../../x.png?exp=1&sig=x").status_code in (403, 404)
++
++
++def test_wrong_file_type_is_415_and_nothing_is_stored(client, tmp_path):
++    r = upload(client, "/campaigns/cmp_001/poster", "evil.png", b"<svg onload=alert(1)>", "image/png")
++    assert r.status_code == 415
++    assert not (tmp_path / "store").exists()
++
++
++def test_empty_upload_is_422_and_oversize_is_413(client):
++    assert upload(client, "/campaigns/cmp_001/poster", "p.png", b"", "image/png").status_code == 422
++    big = PNG + b"\x00" * storage.RULES["poster"].max_bytes
++    assert upload(client, "/campaigns/cmp_001/poster", "p.png", big, "image/png").status_code == 413
++
++
++def test_unknown_campaign_is_404_and_stores_nothing(client, tmp_path):
++    assert upload(client, "/campaigns/nope/poster", "p.png", PNG, "image/png").status_code == 404
++    assert upload(client, "/campaigns/nope/voice-note", "v.wav", WAV, "audio/wav").status_code == 404
++    assert not (tmp_path / "store").exists()
++
++
++def test_voice_note_is_stored_privately_and_the_draft_is_still_returned(client):
++    r = upload(client, "/campaigns/cmp_001/voice-note", "note.wav", WAV, "audio/wav")
++    assert r.status_code == 200 and "transcript" in r.json()
++    key = _MOCK_ASSETS[("cmp_001", "voice_note")]
++    assert key.startswith("voice-notes/cmp_001/") and storage.read_bytes(key) == WAV
++
++
++def test_a_poster_is_not_accepted_as_a_voice_note(client):
++    assert upload(client, "/campaigns/cmp_001/voice-note", "x.png", PNG, "audio/wav").status_code == 415
+diff --git a/docs/api-contract.md b/docs/api-contract.md
+index f9515a7..14af6fa 100644
+--- a/docs/api-contract.md
++++ b/docs/api-contract.md
+@@ -33,8 +33,9 @@ Owner is who builds the real logic. The mock already answers all of them.
+ | GET | `/campaigns` | List campaigns | Campaign list |
+ | POST | `/campaigns` | Create from a template | Step 1: choose template |
+ | GET | `/campaigns/{id}` | One campaign | Any |
+-| POST | `/campaigns/{id}/poster` | Upload poster (multipart `file`) | Step 2 |
+-| POST | `/campaigns/{id}/voice-note` | Upload voice note (multipart `file`), returns an `EventDraft` | Step 2 |
++| POST | `/campaigns/{id}/poster` | **Real.** Upload poster (multipart `file`: PNG, JPEG, WebP or PDF, up to 10 MB). Returns `poster_url`, a signed link that expires (15 minutes by default); `GET /campaigns/{id}` returns a fresh one each time. 415 wrong type, 413 too large, 422 empty, 404 not your campaign | Step 2 |
++| GET | `/files/{key}?exp=&sig=` | **Real.** Serves a stored file when the signed link is genuine. 403 changed or forged, 410 expired, 404 gone. Not part of the organizer UI; use the links the API gives you | Step 2 |
++| POST | `/campaigns/{id}/voice-note` | Upload voice note (multipart `file`: WAV, MP3, M4A, OGG, WebM or FLAC, up to 25 MB), returns an `EventDraft`. The audio is **stored for real**; the draft is still mock until the voice note pipeline is built. Same errors as the poster | Step 2 |
+ | PUT | `/campaigns/{id}/event` | Save reviewed event details | Step 3: review details |
+ | POST | `/campaigns/{id}/audience` | **Real.** Upload CSV (multipart `file`, optional `default_language` query), returns an `ImportReport` with `errors` (skipped rows) and `warnings` (kept rows to check). Returns 422 with a plain sentence if the file cannot be read, 413 over 2 MB. Format: `docs/csv-format.md` | Step 4: audience |
+ | GET | `/audience/template.csv` | Download a starter CSV | Step 4: audience |

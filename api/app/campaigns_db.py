@@ -4,18 +4,20 @@ Every query here is scoped to the signed-in organizer, so one organizer can neve
 another organizer's campaign, even by guessing its ID. A campaign that belongs to someone else
 gets the same 404 as one that does not exist, so IDs cannot be probed.
 """
+from typing import Optional
 from uuid import UUID
 
 import psycopg
 from fastapi import HTTPException
 from psycopg.types.json import Jsonb
 
+from . import storage
 from .schemas import Campaign, CampaignCreate, EventDetails, Me
 
 # psycopg returns arrays of custom enum types as text, so enum arrays are cast to text[] on the way out.
 _SELECT = """
     SELECT c.id, c.name, c.template_key, c.status::text AS status, c.event, c.languages,
-           c.channels::text[] AS channels, c.created_at,
+           c.channels::text[] AS channels, c.created_at, c.poster_path,
            (SELECT count(*) FROM campaign_contacts cc WHERE cc.campaign_id = c.id) AS contact_count
     FROM campaigns c
 """
@@ -36,7 +38,7 @@ def _to_campaign(row: dict) -> Campaign:
     return Campaign(
         id=str(row["id"]), name=row["name"], template_key=row["template_key"], status=row["status"],
         event=row["event"], languages=row["languages"], channels=row["channels"],
-        poster_url=None,  # posters move to private storage in a later task
+        poster_url=storage.signed_path(row["poster_path"]) if row["poster_path"] else None,
         contact_count=row["contact_count"], created_at=row["created_at"],
     )
 
@@ -87,3 +89,30 @@ def save_event_for(conn: psycopg.Connection, me: Me, campaign_id: str, event: Ev
     campaign = get_for(conn, me, campaign_id)
     conn.commit()
     return campaign
+
+
+# Fixed column names, never built from user input.
+_ASSET_SQL = {
+    "poster": (
+        "SELECT poster_path AS old FROM campaigns WHERE id = %s AND organizer_id = %s FOR UPDATE",
+        "UPDATE campaigns SET poster_path = %s WHERE id = %s",
+    ),
+    "voice_note": (
+        "SELECT voice_note_path AS old FROM campaigns WHERE id = %s AND organizer_id = %s FOR UPDATE",
+        "UPDATE campaigns SET voice_note_path = %s WHERE id = %s",
+    ),
+}
+
+
+def set_asset_path(conn: psycopg.Connection, me: Me, campaign_id: str, kind: str, key: str) -> Optional[str]:
+    """Record a new private-storage key for the poster or voice note. Returns the previous key, if any,
+    so the caller can delete the old file. Only the owner's campaign can be changed."""
+    select_sql, update_sql = _ASSET_SQL[kind]
+    cid = _uuid(campaign_id)
+    row = conn.execute(select_sql, (cid, UUID(me.id))).fetchone()
+    if row is None:
+        conn.rollback()
+        raise _not_found()
+    conn.execute(update_sql, (key, cid))
+    conn.commit()
+    return row["old"]

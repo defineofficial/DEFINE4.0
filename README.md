@@ -62,7 +62,7 @@ python scripts/export_openapi.py
 
 1. ~~PostgreSQL and login~~ Done: see `docs/database-setup-windows.md`. Next: move campaigns, then contacts, onto the database one endpoint at a time, and require sign-in on the organizer endpoints with the `current_organizer` dependency in `api/app/auth.py`.
 2. ~~Real CSV import~~ Done: see `docs/csv-format.md`, `api/app/csv_import.py` and the sample files in `docs/samples/`. It currently stores people in memory. Moving it to PostgreSQL means replacing `add_imported_contacts` in `api/app/mock_data.py` and adding the encrypted phone column.
-3. Private storage for posters and voice notes with signed links.
+3. ~~Private storage for posters and voice notes with signed links~~ Done: see `api/app/storage.py`. Files sit in `STORAGE_DIR` and are only readable through `/files/...?exp=...&sig=...` links that expire (15 minutes by default). Voice note audio is stored for real; the draft it returns is still mock until step 4.
 4. Voice note pipeline: transcribe, extract event JSON, return an `EventDraft`.
 5. Translation with back-translation, then the template engine and the four preset seeds.
 6. Registration with personal tokens, then email, then payments in test mode.

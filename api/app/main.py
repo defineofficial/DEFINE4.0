@@ -12,8 +12,7 @@ import psycopg
 from fastapi import Depends, FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
-from . import ai_budget, auth, campaigns_db
-from . import auth, campaigns_db
+from . import ai_budget, auth, campaigns_db, storage, storage_routes
 from . import db as database
 from . import mock_data as db
 from .csv_import import CsvImportError, parse_contacts_csv
@@ -48,11 +47,26 @@ def ai_budget_exceeded(_request, exc: ai_budget.AiBudgetExceeded) -> JSONRespons
     return JSONResponse(status_code=429, content={"detail": str(exc)})
 # ---------- helpers ----------
 
+_MOCK_ASSETS: dict[tuple[str, str], str] = {}  # (campaign_id, "poster" | "voice_note") -> storage key, mock mode only
+
+
 def _campaign(campaign_id: str) -> Campaign:
     c = db.CAMPAIGNS.get(campaign_id)
     if not c:
         raise HTTPException(404, "Campaign not found")
+    poster_key = _MOCK_ASSETS.get((campaign_id, "poster"))
+    if poster_key:  # links expire, so hand out a fresh one each time
+        c.poster_url = storage.signed_path(poster_key)
     return c
+
+
+async def _store_upload(kind: str, campaign_id: str, file: UploadFile) -> storage.StoredFile:
+    """Read an upload (never more than the limit plus one byte) and put it in private storage."""
+    data = await file.read(storage.RULES[kind].max_bytes + 1)
+    try:
+        return storage.save(kind, campaign_id, data)
+    except storage.StorageError as err:
+        raise HTTPException(err.status_code, str(err)) from None
 
 
 def _contacts(campaign_id: str) -> list[Contact]:
@@ -117,6 +131,7 @@ def poster() -> Response:
 # ---------- auth (real when DATABASE_URL is set, mock otherwise) ----------
 
 app.include_router(auth.router)
+app.include_router(storage_routes.router)
 
 
 # ---------- templates ----------
@@ -134,7 +149,7 @@ def list_campaigns(
 ) -> list[Campaign]:
     """Your campaigns only. Needs login when the database is on."""
     if conn is None:
-        return list(db.CAMPAIGNS.values())
+        return [_campaign(cid) for cid in db.CAMPAIGNS]
     return campaigns_db.list_for(conn, me)
 
 
@@ -181,16 +196,56 @@ def save_event(
 
 
 @app.post("/campaigns/{campaign_id}/poster", response_model=PosterResult, tags=["Campaigns"])
-async def upload_poster(campaign_id: str, file: UploadFile = File(...)) -> PosterResult:
-    camp = _campaign(campaign_id)
-    camp.poster_url = "/mock/poster.svg"
-    return PosterResult(poster_url=camp.poster_url)
+async def upload_poster(
+    campaign_id: str, file: UploadFile = File(...), me: Me = Depends(auth.current_organizer),
+    conn: Optional[psycopg.Connection] = Depends(database.get_conn),
+) -> PosterResult:
+    """Real. Stores the poster privately (PNG, JPEG, WebP or PDF, up to 10 MB).
+
+    `poster_url` is a signed link that stops working after a few minutes. Fetch the campaign again for a new one.
+    """
+    if conn is None:
+        _campaign(campaign_id)
+    else:
+        campaigns_db.get_for(conn, me, campaign_id)  # 404 unless it is this organizer's campaign
+    stored = await _store_upload("poster", campaign_id, file)
+    if conn is None:
+        storage.delete(_MOCK_ASSETS.get((campaign_id, "poster")))
+        _MOCK_ASSETS[(campaign_id, "poster")] = stored.key
+    else:
+        try:
+            old_key = campaigns_db.set_asset_path(conn, me, campaign_id, "poster", stored.key)
+        except Exception:
+            storage.delete(stored.key)  # do not leave an orphan file behind
+            raise
+        storage.delete(old_key)
+    return PosterResult(poster_url=storage.signed_path(stored.key))
 
 
 @app.post("/campaigns/{campaign_id}/voice-note", response_model=EventDraft, tags=["Campaigns"])
-async def upload_voice_note(campaign_id: str, file: UploadFile = File(...)) -> EventDraft:
-    """Mock: ignores the audio and returns a fixed draft. Real version transcribes then extracts."""
-    _campaign(campaign_id)
+async def upload_voice_note(
+    campaign_id: str, file: UploadFile = File(...), me: Me = Depends(auth.current_organizer),
+    conn: Optional[psycopg.Connection] = Depends(database.get_conn),
+) -> EventDraft:
+    """The audio is stored privately for real (WAV, MP3, M4A, OGG, WebM or FLAC, up to 25 MB).
+
+    The draft is still mock: transcription and extraction come in the voice note pipeline task.
+    """
+    if conn is None:
+        _campaign(campaign_id)
+    else:
+        campaigns_db.get_for(conn, me, campaign_id)
+    stored = await _store_upload("voice_note", campaign_id, file)
+    if conn is None:
+        storage.delete(_MOCK_ASSETS.get((campaign_id, "voice_note")))
+        _MOCK_ASSETS[(campaign_id, "voice_note")] = stored.key
+    else:
+        try:
+            old_key = campaigns_db.set_asset_path(conn, me, campaign_id, "voice_note", stored.key)
+        except Exception:
+            storage.delete(stored.key)
+            raise
+        storage.delete(old_key)
     return EventDraft(
         transcript=("We are holding an AI in Healthcare seminar on the fourteenth of November at ten in the "
                     "morning, in the Seminar Hall, Block A, in Kochi. Registration is five hundred rupees."),

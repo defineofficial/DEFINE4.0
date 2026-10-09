@@ -33,8 +33,9 @@ Owner is who builds the real logic. The mock already answers all of them.
 | GET | `/campaigns` | List campaigns | Campaign list |
 | POST | `/campaigns` | Create from a template | Step 1: choose template |
 | GET | `/campaigns/{id}` | One campaign | Any |
-| POST | `/campaigns/{id}/poster` | Upload poster (multipart `file`) | Step 2 |
-| POST | `/campaigns/{id}/voice-note` | Upload voice note (multipart `file`), returns an `EventDraft` | Step 2 |
+| POST | `/campaigns/{id}/poster` | **Real.** Upload poster (multipart `file`: PNG, JPEG, WebP or PDF, up to 10 MB). Returns `poster_url`, a signed link that expires (15 minutes by default); `GET /campaigns/{id}` returns a fresh one each time. 415 wrong type, 413 too large, 422 empty, 404 not your campaign | Step 2 |
+| GET | `/files/{key}?exp=&sig=` | **Real.** Serves a stored file when the signed link is genuine. 403 changed or forged, 410 expired, 404 gone. Not part of the organizer UI; use the links the API gives you | Step 2 |
+| POST | `/campaigns/{id}/voice-note` | Upload voice note (multipart `file`: WAV, MP3, M4A, OGG, WebM or FLAC, up to 25 MB), returns an `EventDraft`. The audio is **stored for real**; the draft is still mock until the voice note pipeline is built. Same errors as the poster | Step 2 |
 | PUT | `/campaigns/{id}/event` | Save reviewed event details | Step 3: review details |
 | POST | `/campaigns/{id}/audience` | **Real.** Upload CSV (multipart `file`, optional `default_language` query), returns an `ImportReport` with `errors` (skipped rows) and `warnings` (kept rows to check). Returns 422 with a plain sentence if the file cannot be read, 413 over 2 MB. Format: `docs/csv-format.md` | Step 4: audience |
 | GET | `/audience/template.csv` | Download a starter CSV | Step 4: audience |
