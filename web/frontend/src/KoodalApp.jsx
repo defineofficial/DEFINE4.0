@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { api, setAuthToken } from "./api.js";
 
 /* ---------- styles ---------- */
 const css = `
@@ -295,18 +296,23 @@ function Message({ k, ch }) {
 }
 
 /* ---------- 1. Home / Login Landing Page ---------- */
-function Home({ onLogin }) {
+function Home({ onLogin, backendStatus }) {
   const [email, setEmail] = useState("organizer@example.com");
   const [password, setPassword] = useState("password123");
   const [loading, setLoading] = useState(false);
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     setLoading(true);
-    setTimeout(() => {
-      setLoading(false);
+    try {
+      await api.login(email, password);
+      const me = await api.getMe();
+      onLogin(me || { name: "Asha Thomas", email, role: "organizer" });
+    } catch {
       onLogin({ name: "Asha Thomas", email, role: "organizer" });
-    }, 350);
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -315,7 +321,14 @@ function Home({ onLogin }) {
         <div className="home-logo">
           <span>✳</span> koodal <b>/ EventReach</b>
         </div>
-        <div style={{ display: "flex", gap: 12 }}>
+        <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+          <span
+            className={`pill ${backendStatus === "connected" ? "g" : "w"}`}
+            style={{ fontSize: 11, margin: 0 }}
+            title={backendStatus === "connected" ? "FastAPI backend running at http://localhost:8000" : "Running in standalone mock mode"}
+          >
+            {backendStatus === "connected" ? "● Backend Live :8000" : "○ Standalone Demo"}
+          </span>
           <button className="btn-sm" onClick={() => onLogin({ name: "Asha Thomas", email: "organizer@example.com", role: "organizer" })}>
             Demo Sign In →
           </button>
@@ -397,6 +410,10 @@ const STEPS = ["Template", "Upload", "Review", "Audience", "Translate", "Channel
 function Wizard({ onCancel, onLaunch }) {
   const [i, setI] = useState(0), [tpl, setTpl] = useState(0);
   const [extracting, setExtracting] = useState(false);
+  const [testPhone, setTestPhone] = useState("+91 98000 00000");
+  const [testLang, setTestLang] = useState("Malayalam");
+  const [testResult, setTestResult] = useState(null);
+  const [calling, setCalling] = useState(false);
 
   const body = [
     <>
@@ -498,15 +515,33 @@ function Wizard({ onCancel, onLaunch }) {
     </>,
     <>
       <h3>7. Preview with a test call</h3>
-      <Field label="Phone number for test" placeholder="+91 98000 00000" defaultValue="+91 98000 00000" />
+      <div className="f">
+        <label>Phone number for test</label>
+        <input value={testPhone} onChange={(e) => setTestPhone(e.target.value)} placeholder="+91 98000 00000" />
+      </div>
       <div className="f">
         <label>Language</label>
-        <select><option>Malayalam</option><option>Hindi</option><option>English</option><option>Tamil</option></select>
+        <select value={testLang} onChange={(e) => setTestLang(e.target.value)}>
+          <option>Malayalam</option><option>Hindi</option><option>English</option><option>Tamil</option>
+        </select>
       </div>
-      <button className="btn p" style={{ width: 220 }}>Place Test Call</button>
-      <div className="hint">Test call does not burn production contact credits.</div>
-      <Alert t="g" title="Exotel Test Call Status">
-        Call placed → Answered → Spoken script played → Keypad '1' pressed → Outcome: Confirmed.
+      <button
+        className="btn p"
+        style={{ width: 220 }}
+        disabled={calling}
+        onClick={async () => {
+          setCalling(true);
+          const langCode = testLang === "Malayalam" ? "ml" : testLang === "Hindi" ? "hi" : testLang === "Tamil" ? "ta" : "en";
+          const res = await api.testCall("cmp_001", testPhone, langCode);
+          setCalling(false);
+          setTestResult(res?.message || "Exotel test call queued.");
+        }}
+      >
+        {calling ? "Dialing..." : "Place Test Call"}
+      </button>
+      <div className="hint">Test call connects through Exotel IVR pipeline.</div>
+      <Alert t="g" title={testResult ? "API Response Received" : "Exotel Test Call Status"}>
+        {testResult ? `Backend: ${testResult}` : "Call placed → Answered → Spoken script played → Keypad '1' pressed → Outcome: Confirmed."}
       </Alert>
     </>,
     <>
@@ -724,7 +759,15 @@ function Dashboard({ onNewCampaign, onSignOut, user }) {
                   This will call 412 non-responders via Exotel. Maximum 3 attempts per contact.
                   Opted-out numbers, DND, and exhausted numbers are strictly skipped.
                 </p>
-                <button className="btn p">+ Retry non-responders</button>
+                <button
+                  className="btn p"
+                  onClick={async () => {
+                    const res = await api.retryOutreach(activeCampaign);
+                    alert(`Exotel Retry Dispatched:\nQueued ${res.queued} non-responders.\nSkipped: ${res.skipped_opted_out} opted out, ${res.skipped_max_attempts} reached max attempts.`);
+                  }}
+                >
+                  + Retry non-responders
+                </button>
               </div>
             </div>
 
@@ -927,6 +970,22 @@ export default function KoodalApp() {
   // Views: "home" (default landing/login) | "dashboard" | "wizard"
   const [view, setView] = useState("home");
   const [user, setUser] = useState({ name: "Asha Thomas", email: "organizer@example.com", role: "organizer" });
+  const [backendStatus, setBackendStatus] = useState("checking");
+
+  useEffect(() => {
+    // Check backend health immediately on mount
+    api.checkHealth().then((res) => {
+      setBackendStatus(res ? "connected" : "offline");
+    });
+
+    // Re-check every 8 seconds
+    const interval = setInterval(() => {
+      api.checkHealth().then((res) => {
+        setBackendStatus(res ? "connected" : "offline");
+      });
+    }, 8000);
+    return () => clearInterval(interval);
+  }, []);
 
   return (
     <div className="k">
@@ -939,6 +998,13 @@ export default function KoodalApp() {
             <span>✳</span> koodal <small style={{ color: "#7a90a2", fontWeight: 400 }}>· EventReach Platform</small>
           </div>
           <div className="top-right">
+            <span
+              className={`pill ${backendStatus === "connected" ? "g" : "w"}`}
+              style={{ fontSize: 11, margin: 0 }}
+              title={backendStatus === "connected" ? "Connected to FastAPI at http://localhost:8000" : "FastAPI server offline; running in mock mode"}
+            >
+              {backendStatus === "connected" ? "● Backend Live :8000" : "○ Demo Mode"}
+            </span>
             <div className="user-pill">
               <div className="user-dot" />
               <span>{user?.name} ({user?.role})</span>
@@ -946,7 +1012,13 @@ export default function KoodalApp() {
             <button className="btn-sm" onClick={() => setView("wizard")}>
               + Create Campaign
             </button>
-            <button className="btn-sm" onClick={() => setView("home")}>
+            <button
+              className="btn-sm"
+              onClick={() => {
+                setAuthToken(null);
+                setView("home");
+              }}
+            >
               Sign Out
             </button>
           </div>
@@ -956,6 +1028,7 @@ export default function KoodalApp() {
       {/* 1. Home / Login Flow */}
       {view === "home" && (
         <Home
+          backendStatus={backendStatus}
           onLogin={(userData) => {
             setUser(userData);
             setView("dashboard");
@@ -978,7 +1051,10 @@ export default function KoodalApp() {
       {view === "dashboard" && (
         <Dashboard
           onNewCampaign={() => setView("wizard")}
-          onSignOut={() => setView("home")}
+          onSignOut={() => {
+            setAuthToken(null);
+            setView("home");
+          }}
           user={user}
         />
       )}
