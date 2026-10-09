@@ -1,13 +1,13 @@
 import { NavLink } from 'react-router-dom'
-import { LayoutDashboard, Library, BookOpen, Bookmark, PlusCircle } from 'lucide-react'
+import { LayoutDashboard, Library, BookOpen, Bookmark, PlusCircle, BookText } from 'lucide-react'
 import './Layout.css'
 
 export default function AppSidebar() {
   const navItems = [
     { name: 'Dashboard', path: '/dashboard', icon: LayoutDashboard },
     { name: 'Library', path: '/resources', icon: Library },
-    { name: 'Subjects', path: '/subjects', icon: BookOpen },
     { name: 'Saved', path: '/saved', icon: Bookmark },
+    { name: 'Docs', path: '/docs', icon: BookText },
   ]
 
   return (

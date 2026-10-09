@@ -1,7 +1,15 @@
-import { useState } from 'react'
-import { MOCK_SUBJECTS } from '../data/mockData'
+import { useState, useEffect } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { supabase } from '../lib/supabase'
+import { useAuth } from '../contexts/AuthContext'
 
 export default function AddResource() {
+  const { user } = useAuth()
+  const navigate = useNavigate()
+  const [subjects, setSubjects] = useState([])
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState(null)
+  
   const [formData, setFormData] = useState({
     title: '',
     type: 'note',
@@ -10,9 +18,66 @@ export default function AddResource() {
     description: ''
   })
 
-  const handleSubmit = (e) => {
+  // Fetch subjects for the dropdown on mount
+  useEffect(() => {
+    const fetchSubjects = async () => {
+      const { data, error } = await supabase.from('subjects').select('*').order('name')
+      if (error) {
+        console.error('Error fetching subjects:', error)
+      } else {
+        setSubjects(data || [])
+      }
+    }
+    fetchSubjects()
+  }, [])
+
+  const handleSubmit = async (e) => {
     e.preventDefault()
-    alert('Resource submission is not yet connected to the backend.')
+    if (!user) {
+      setError("You must be signed in to add a resource.")
+      return
+    }
+
+    setLoading(true)
+    setError(null)
+
+    const { data: defaultSubjects } = await supabase.from('subjects').select('id').limit(1)
+    const fallbackSubjectId = defaultSubjects?.[0]?.id
+
+    if (!fallbackSubjectId) {
+      setError("Database is missing a default subject to store resources.")
+      setLoading(false)
+      return
+    }
+
+    const { data, error: insertError } = await supabase
+      .from('resources')
+      .insert([
+        {
+          title: formData.title,
+          type: formData.type,
+          url: formData.url,
+          description: formData.description,
+          subject_id: fallbackSubjectId,
+          author_name: user.user_metadata?.full_name || user.email.split('@')[0],
+          user_id: user.id
+        }
+      ])
+      .select()
+      .single()
+
+    setLoading(false)
+
+    if (insertError) {
+      setError(insertError.message)
+    } else {
+      // Redirect to the newly created resource detail page
+      if (data && data.id) {
+        navigate(`/resources/${data.id}`)
+      } else {
+        navigate('/resources')
+      }
+    }
   }
 
   return (
@@ -24,6 +89,12 @@ export default function AddResource() {
 
       <form onSubmit={handleSubmit} className="glass-panel" style={{ padding: '2rem', borderRadius: 'var(--radius-lg)', display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
         
+        {error && (
+          <div style={{ padding: '0.75rem', background: 'rgba(239, 68, 68, 0.1)', color: '#ef4444', borderRadius: 'var(--radius-sm)', fontSize: '0.875rem' }}>
+            {error}
+          </div>
+        )}
+
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
           <label htmlFor="title">Resource Title</label>
           <input 
@@ -36,7 +107,7 @@ export default function AddResource() {
           />
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '1.5rem' }}>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
             <label htmlFor="type">Resource Type</label>
             <select 
@@ -48,21 +119,6 @@ export default function AddResource() {
               <option value="pdf">PDF Document</option>
               <option value="video">Video</option>
               <option value="github">GitHub Repo</option>
-            </select>
-          </div>
-
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-            <label htmlFor="subject">Subject</label>
-            <select 
-              id="subject"
-              value={formData.subjectId}
-              onChange={(e) => setFormData({...formData, subjectId: e.target.value})}
-              required
-            >
-              <option value="">Select a subject...</option>
-              {MOCK_SUBJECTS.map(s => (
-                <option key={s.id} value={s.id}>{s.name}</option>
-              ))}
             </select>
           </div>
         </div>
@@ -92,7 +148,9 @@ export default function AddResource() {
 
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '1rem', marginTop: '1rem' }}>
           <button type="button" className="btn btn-ghost" onClick={() => window.history.back()}>Cancel</button>
-          <button type="submit" className="btn btn-primary">Save Resource</button>
+          <button type="submit" className="btn btn-primary" disabled={loading}>
+            {loading ? 'Saving...' : 'Save Resource'}
+          </button>
         </div>
       </form>
     </div>

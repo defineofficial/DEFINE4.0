@@ -1,9 +1,23 @@
-import { Link } from 'react-router-dom'
+import { useState } from 'react'
+import { Link, useNavigate } from 'react-router-dom'
+import { useAuth } from '../../contexts/AuthContext'
 
 export default function SignIn() {
-  const handleSubmit = (e) => {
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [error, setError] = useState(null)
+  const { signIn } = useAuth()
+  const navigate = useNavigate()
+
+  const handleSubmit = async (e) => {
     e.preventDefault()
-    window.location.href = '/dashboard'
+    setError(null)
+    const { error } = await signIn({ email, password })
+    if (error) {
+      setError(error.message)
+    } else {
+      navigate('/dashboard')
+    }
   }
 
   return (
@@ -17,10 +31,16 @@ export default function SignIn() {
           <p className="text-secondary" style={{ marginTop: '0.5rem' }}>Sign in to access your resources</p>
         </div>
 
+        {error && (
+          <div style={{ padding: '0.75rem', background: 'rgba(239, 68, 68, 0.1)', color: '#ef4444', borderRadius: 'var(--radius-sm)', fontSize: '0.875rem' }}>
+            {error}
+          </div>
+        )}
+
         <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
             <label htmlFor="email">Email</label>
-            <input type="email" id="email" placeholder="you@example.com" required />
+            <input type="email" id="email" placeholder="you@example.com" value={email} onChange={(e) => setEmail(e.target.value)} required />
           </div>
           
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
@@ -28,7 +48,7 @@ export default function SignIn() {
               <label htmlFor="password">Password</label>
               <a href="#" className="text-sm" style={{ color: 'var(--accent-primary)' }}>Forgot password?</a>
             </div>
-            <input type="password" id="password" placeholder="••••••••" required />
+            <input type="password" id="password" placeholder="••••••••" value={password} onChange={(e) => setPassword(e.target.value)} required />
           </div>
 
           <button type="submit" className="btn btn-primary" style={{ marginTop: '0.5rem', width: '100%' }}>

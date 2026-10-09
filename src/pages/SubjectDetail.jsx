@@ -1,13 +1,39 @@
+import { useState, useEffect } from 'react'
 import { useParams, Link } from 'react-router-dom'
-import { MOCK_SUBJECTS, MOCK_RESOURCES } from '../data/mockData'
+import { supabase } from '../lib/supabase'
 import { ResourceCard } from '../components/ui/ResourceCard'
 import { ArrowLeft } from 'lucide-react'
 
 export default function SubjectDetail() {
   const { id } = useParams()
-  const subject = MOCK_SUBJECTS.find(s => s.id === id)
-  const resources = MOCK_RESOURCES.filter(r => r.subjectId === id)
+  const [subject, setSubject] = useState(null)
+  const [resources, setResources] = useState([])
+  const [loading, setLoading] = useState(true)
 
+  useEffect(() => {
+    const fetchSubjectData = async () => {
+      const [subjectRes, resourcesRes] = await Promise.all([
+        supabase.from('subjects').select('*').eq('id', id).single(),
+        supabase.from('resources').select('*, saved_resources(id)').eq('subject_id', id)
+      ])
+
+      if (subjectRes.data) setSubject(subjectRes.data)
+      if (resourcesRes.data) {
+        const formattedRes = resourcesRes.data.map(res => ({
+          ...res,
+          author: res.author_name,
+          createdAt: res.created_at,
+          isSaved: res.saved_resources && res.saved_resources.length > 0
+        }))
+        setResources(formattedRes)
+      }
+      setLoading(false)
+    }
+
+    fetchSubjectData()
+  }, [id])
+
+  if (loading) return <div>Loading...</div>
   if (!subject) return <div>Subject not found.</div>
 
   return (
