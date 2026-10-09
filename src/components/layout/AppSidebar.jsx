@@ -11,7 +11,7 @@ export default function AppSidebar() {
   ]
 
   return (
-    <aside className="app-sidebar glass-panel">
+    <aside className="app-sidebar">
       <div className="sidebar-brand">
         <div className="brand-logo">N</div>
         <h2>NoteVault</h2>
