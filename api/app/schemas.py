@@ -276,6 +276,8 @@ class RegistrationPage(BaseModel):
     fee_inr: int
     stage: Stage
     already_registered: bool
+    event_full: bool = False
+    expired: bool = False
 
 
 class RegisterRequest(BaseModel):

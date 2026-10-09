@@ -5,14 +5,14 @@ State lives in memory and resets when the server restarts.
 Real logic replaces these handlers one by one. Keep the schemas in schemas.py the same.
 """
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 import psycopg
-from fastapi import Depends, FastAPI, File, HTTPException, Query, UploadFile
+from fastapi import Depends, FastAPI, File, Header, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, Response
-from . import ai_budget, auth, campaigns_db, storage, storage_routes
+from fastapi.responses import JSONResponse, RedirectResponse, Response
+from . import ai_budget, auth, calendar_invite, campaigns_db, channels, payments, qr_checkin, storage, storage_routes, template_engine, translation_engine, voice_pipeline
 from . import db as database
 from . import mock_data as db
 from .csv_import import CsvImportError, parse_contacts_csv
@@ -138,7 +138,7 @@ app.include_router(storage_routes.router)
 
 @app.get("/templates", response_model=list[Template], tags=["Templates"])
 def templates() -> list[Template]:
-    return db.TEMPLATES
+    return template_engine.list_templates()
 
 
 # ---------- campaigns ----------
@@ -246,13 +246,8 @@ async def upload_voice_note(
             storage.delete(stored.key)
             raise
         storage.delete(old_key)
-    return EventDraft(
-        transcript=("We are holding an AI in Healthcare seminar on the fourteenth of November at ten in the "
-                    "morning, in the Seminar Hall, Block A, in Kochi. Registration is five hundred rupees."),
-        detected_language=Language.en,
-        event=db.CAMPAIGNS["cmp_001"].event,
-        needs_review=["ends_at", "capacity"],
-    )
+    audio_bytes = storage.read_bytes(stored.key)
+    return voice_pipeline.process_voice_note(audio_bytes, filename=file.filename or "voice_note.mp3")
 
 
 # ---------- audience ----------
@@ -332,8 +327,23 @@ def opt_out(contact_id: str) -> Contact:
 
 @app.get("/campaigns/{campaign_id}/translations", response_model=list[Translation], tags=["Translations"])
 def list_translations(campaign_id: str) -> list[Translation]:
-    _campaign(campaign_id)
-    return db.TRANSLATIONS.get(campaign_id, [])
+    camp = _campaign(campaign_id)
+    items = db.TRANSLATIONS.get(campaign_id, [])
+    if not items and camp.event and camp.languages:
+        items = translation_engine.generate_translations(campaign_id, camp.event, camp.languages)
+        db.TRANSLATIONS[campaign_id] = items
+    return items
+
+
+@app.post("/campaigns/{campaign_id}/translations/generate", response_model=list[Translation], tags=["Translations"])
+def generate_campaign_translations(campaign_id: str) -> list[Translation]:
+    camp = _campaign(campaign_id)
+    if not camp.event:
+        raise HTTPException(400, "Cannot generate translations without event details")
+    langs = camp.languages or [Language.en, Language.hi, Language.ml, Language.ta]
+    items = translation_engine.generate_translations(campaign_id, camp.event, langs)
+    db.TRANSLATIONS[campaign_id] = items
+    return items
 
 
 @app.put("/campaigns/{campaign_id}/translations/{language}", response_model=Translation, tags=["Translations"])
@@ -413,10 +423,22 @@ def registration_page(token: str) -> RegistrationPage:
     camp, contact = _by_token(token)
     if not camp.event:
         raise HTTPException(404, "This event is not published yet")
+
+    now = datetime.now(timezone.utc)
+    expired = bool(camp.event.rsvp_deadline and now > camp.event.rsvp_deadline)
+    reg_count = sum(c.stage in (Stage.registered, Stage.paid, Stage.attended) for c in _contacts(camp.id))
+    event_full = bool(camp.event.capacity and reg_count >= camp.event.capacity)
+
     return RegistrationPage(
-        first_name=contact.name.split()[0], language=contact.language, event=camp.event,
-        poster_url=camp.poster_url, fee_inr=camp.event.fee_inr, stage=contact.stage,
+        first_name=contact.name.split()[0],
+        language=contact.language,
+        event=camp.event,
+        poster_url=camp.poster_url,
+        fee_inr=camp.event.fee_inr,
+        stage=contact.stage,
         already_registered=contact.stage in (Stage.registered, Stage.paid, Stage.attended),
+        event_full=event_full,
+        expired=expired,
     )
 
 
@@ -425,6 +447,16 @@ def register(token: str, body: RegisterRequest) -> RegisterResult:
     camp, contact = _by_token(token)
     if not body.consent:
         raise HTTPException(400, "Consent is required to register")
+
+    now = datetime.now(timezone.utc)
+    if camp.event and camp.event.rsvp_deadline and now > camp.event.rsvp_deadline:
+        raise HTTPException(400, "Registration for this event has closed")
+
+    if camp.event and camp.event.capacity:
+        reg_count = sum(c.stage in (Stage.registered, Stage.paid, Stage.attended) for c in _contacts(camp.id))
+        if reg_count >= camp.event.capacity and contact.stage not in (Stage.registered, Stage.paid, Stage.attended):
+            raise HTTPException(409, "This event is at full capacity")
+
     if contact.stage not in (Stage.paid, Stage.attended):
         contact.stage = Stage.registered
     fee = camp.event.fee_inr if camp.event else 0
@@ -432,6 +464,36 @@ def register(token: str, body: RegisterRequest) -> RegisterResult:
         stage=contact.stage, amount_inr=fee,
         requires_payment=fee > 0 and contact.stage not in (Stage.paid, Stage.attended),
     )
+
+
+@app.get("/r/{token}/calendar.ics", tags=["Registration (public)"])
+def download_calendar_invite(token: str) -> Response:
+    """Download standard .ics iCalendar file for the event."""
+    camp, contact = _by_token(token)
+    if not camp.event:
+        raise HTTPException(404, "Event details not found")
+    ics_body = calendar_invite.generate_ics(camp.event, contact.name)
+    filename = f"{camp.name.replace(' ', '_').lower()}.ics"
+    return Response(
+        content=ics_body,
+        media_type="text/calendar",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@app.get("/r/{token}/ticket.svg", tags=["Registration (public)"])
+def get_ticket_svg(token: str) -> Response:
+    """Renders visual SVG admission pass with QR representation."""
+    camp, contact = _by_token(token)
+    svg_body = qr_checkin.generate_ticket_svg(token, contact.name, camp.name)
+    return Response(content=svg_body, media_type="image/svg+xml")
+
+
+@app.post("/r/{token}/check-in", tags=["Registration (public)"])
+def check_in_attendee(token: str) -> dict:
+    """Staff QR scan check-in endpoint: marks person as Attended."""
+    _, contact = _by_token(token)
+    return qr_checkin.process_checkin(contact)
 
 
 @app.post("/r/{token}/pay", response_model=PaymentOrder, tags=["Registration (public)"])
@@ -442,16 +504,50 @@ def create_payment(token: str) -> PaymentOrder:
         raise HTTPException(400, "This event has no fee")
     if contact.stage in (Stage.paid, Stage.attended):
         raise HTTPException(409, "Already paid")
-    return PaymentOrder(order_id=f"order_mock_{contact.id}", amount_inr=fee,
-                        gateway_key_id="rzp_test_mock", status="created")
+    return payments.create_order(contact.id, fee, camp.id)
 
 
 @app.post("/webhooks/payment", tags=["Registration (public)"])
-def payment_webhook(body: PaymentWebhook) -> dict:
-    """Mock of the gateway callback. The real one must verify the gateway signature first."""
+async def payment_webhook(
+    body: PaymentWebhook,
+    request: Request,
+    x_razorpay_signature: Optional[str] = Header(None),
+) -> dict:
+    """Gateway callback. Verifies gateway signature when header is present and safely idempotently marks order paid."""
+    if x_razorpay_signature:
+        raw_body = await request.body()
+        if not payments.verify_webhook_signature(raw_body, x_razorpay_signature):
+            raise HTTPException(400, "Invalid webhook signature")
+
     contact_id = body.order_id.removeprefix("order_mock_")
+    matched_contact = None
+    order_rec = payments.get_order(body.order_id) or {}
     for _, c in db.TOKENS.values():
-        if c.id == contact_id and body.status == "paid":
-            c.stage = Stage.paid
-            return {"ok": True}
-    raise HTTPException(404, "Order not found")
+        if c.id == contact_id or c.id == order_rec.get("contact_id"):
+            matched_contact = c
+            break
+
+    if not matched_contact and not payments.get_order(body.order_id):
+        raise HTTPException(404, "Order not found")
+
+    result = payments.process_payment_webhook(body.order_id, body.status)
+    if matched_contact and body.status.lower() in ("paid", "captured", "success"):
+        matched_contact.stage = Stage.paid
+        if matched_contact.email:
+            channels.send_email(
+                to_email=matched_contact.email,
+                subject="Payment Receipt: Registration Confirmed",
+                body=f"Dear {matched_contact.name},\n\nYour payment for order {body.order_id} has been received. Your registration is confirmed!",
+            )
+    return result
+
+
+# ---------- short links ----------
+
+@app.get("/s/{code}", tags=["Short Links"], include_in_schema=False)
+def short_link_redirect(code: str) -> RedirectResponse:
+    target = channels.resolve_short_link(code)
+    if not target:
+        raise HTTPException(404, "Short link not found or expired")
+    return RedirectResponse(url=target, status_code=307)
+

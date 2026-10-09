@@ -58,13 +58,14 @@ python scripts/export_openapi.py
 | Dashboard | F2 |
 | Registration page, message layouts, call-script copy | F3 |
 
+See **[CHECKLIST.md](./CHECKLIST.md)** for the complete 116-task team tracker and live status.
+
 ## Next steps for B2
 
 1. ~~PostgreSQL and login~~ Done: see `docs/database-setup-windows.md`. Next: move campaigns, then contacts, onto the database one endpoint at a time, and require sign-in on the organizer endpoints with the `current_organizer` dependency in `api/app/auth.py`.
 2. ~~Real CSV import~~ Done: see `docs/csv-format.md`, `api/app/csv_import.py` and the sample files in `docs/samples/`. It currently stores people in memory. Moving it to PostgreSQL means replacing `add_imported_contacts` in `api/app/mock_data.py` and adding the encrypted phone column.
-3. ~~Private storage for posters and voice notes with signed links~~ Done: see `api/app/storage.py`. Files sit in `STORAGE_DIR` and are only readable through `/files/...?exp=...&sig=...` links that expire (15 minutes by default). Voice note audio is stored for real; the draft it returns is still mock until step 4.
-4. Voice note pipeline: transcribe, extract event JSON, return an `EventDraft`.
-5. Translation with back-translation, then the template engine and the four preset seeds.
-6. Registration with personal tokens, then email, then payments in test mode.
-
-Keep the mock endpoints working while you replace them, so the frontend is never blocked.
+4. ~~Voice note pipeline: transcribe, extract event JSON, return an EventDraft~~ Done: see `api/app/voice_pipeline.py`.
+5. ~~Translation with back-translation, then the template engine and the four preset seeds~~ Done: see `api/app/translation_engine.py` and `api/app/template_engine.py`.
+6. ~~Registration with personal tokens, channels, and test mode payments~~ Done: see `api/app/payments.py`, `api/app/channels.py`, `api/app/contacts_db.py`, and `api/app/privacy.py`.
+7. ~~Data protection note and privacy architecture~~ Done: see `docs/data-protection.md`.
+8. Wire organizer & registration frontend pages with F1 and F3 as screens merge; conduct live telecom rehearsal with B1.

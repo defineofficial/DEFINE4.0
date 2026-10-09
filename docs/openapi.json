@@ -345,7 +345,13 @@
           "Campaigns"
         ],
         "summary": "Upload Poster",
+        "description": "Real. Stores the poster privately (PNG, JPEG, WebP or PDF, up to 10 MB).\n\n`poster_url` is a signed link that stops working after a few minutes. Fetch the campaign again for a new one.",
         "operationId": "upload_poster_campaigns__campaign_id__poster_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "parameters": [
           {
             "name": "campaign_id",
@@ -397,8 +403,13 @@
           "Campaigns"
         ],
         "summary": "Upload Voice Note",
-        "description": "Mock: ignores the audio and returns a fixed draft. Real version transcribes then extracts.",
+        "description": "The audio is stored privately for real (WAV, MP3, M4A, OGG, WebM or FLAC, up to 25 MB).\n\nThe draft is still mock: transcription and extraction come in the voice note pipeline task.",
         "operationId": "upload_voice_note_campaigns__campaign_id__voice_note_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "parameters": [
           {
             "name": "campaign_id",
@@ -728,6 +739,52 @@
                     "$ref": "#/components/schemas/Translation"
                   },
                   "title": "Response List Translations Campaigns  Campaign Id  Translations Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/campaigns/{campaign_id}/translations/generate": {
+      "post": {
+        "tags": [
+          "Translations"
+        ],
+        "summary": "Generate Campaign Translations",
+        "operationId": "generate_campaign_translations_campaigns__campaign_id__translations_generate_post",
+        "parameters": [
+          {
+            "name": "campaign_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Campaign Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Translation"
+                  },
+                  "title": "Response Generate Campaign Translations Campaigns  Campaign Id  Translations Generate Post"
                 }
               }
             }
@@ -1179,6 +1236,133 @@
         }
       }
     },
+    "/r/{token}/calendar.ics": {
+      "get": {
+        "tags": [
+          "Registration (public)"
+        ],
+        "summary": "Download Calendar Invite",
+        "description": "Download standard .ics iCalendar file for the event.",
+        "operationId": "download_calendar_invite_r__token__calendar_ics_get",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/r/{token}/ticket.svg": {
+      "get": {
+        "tags": [
+          "Registration (public)"
+        ],
+        "summary": "Get Ticket Svg",
+        "description": "Renders visual SVG admission pass with QR representation.",
+        "operationId": "get_ticket_svg_r__token__ticket_svg_get",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/r/{token}/check-in": {
+      "post": {
+        "tags": [
+          "Registration (public)"
+        ],
+        "summary": "Check In Attendee",
+        "description": "Staff QR scan check-in endpoint: marks person as Attended.",
+        "operationId": "check_in_attendee_r__token__check_in_post",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Check In Attendee R  Token  Check In Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/r/{token}/pay": {
       "post": {
         "tags": [
@@ -1227,17 +1411,35 @@
           "Registration (public)"
         ],
         "summary": "Payment Webhook",
-        "description": "Mock of the gateway callback. The real one must verify the gateway signature first.",
+        "description": "Gateway callback. Verifies gateway signature when header is present and safely idempotently marks order paid.",
         "operationId": "payment_webhook_webhooks_payment_post",
+        "parameters": [
+          {
+            "name": "x-razorpay-signature",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Razorpay-Signature"
+            }
+          }
+        ],
         "requestBody": {
+          "required": true,
           "content": {
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/PaymentWebhook"
               }
             }
-          },
-          "required": true
+          }
         },
         "responses": {
           "200": {
@@ -1245,8 +1447,8 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
                   "type": "object",
+                  "additionalProperties": true,
                   "title": "Response Payment Webhook Webhooks Payment Post"
                 }
               }
@@ -2121,6 +2323,16 @@
           "already_registered": {
             "type": "boolean",
             "title": "Already Registered"
+          },
+          "event_full": {
+            "type": "boolean",
+            "title": "Event Full",
+            "default": false
+          },
+          "expired": {
+            "type": "boolean",
+            "title": "Expired",
+            "default": false
           }
         },
         "type": "object",
