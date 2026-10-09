@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { api, setAuthToken } from "./api.js";
 
 /* ---------- styles ---------- */
@@ -102,6 +102,15 @@ table{width:100%;border-collapse:collapse;font-size:13px}th{background:var(--ink
 .bar{height:8px;background:#DFF5F2;border-radius:9px;margin:6px 0}.bar i{display:block;height:100%;background:#3DE0D0;border-radius:9px}
 .qr{width:180px;height:180px;margin:12px auto;background:repeating-conic-gradient(var(--ink) 0 25%,#fff 0 50%) 0 0/30px 30px;border:8px solid #fff;outline:1px solid var(--line)}
 .scan{background:var(--ink);color:#fff;border-radius:12px;height:300px;display:grid;place-items:center}
+@keyframes pulse-red{0%{transform:scale(1);opacity:1}50%{transform:scale(1.2);opacity:.6}100%{transform:scale(1);opacity:1}}
+.rec-dot{display:inline-block;width:10px;height:10px;background:#C0233B;border-radius:50%;animation:pulse-red 1.2s infinite;margin-right:6px}
+.wave-bars{display:flex;justify-content:center;align-items:center;gap:3px;height:24px;margin:10px 0}
+.wave-bars i{display:inline-block;width:3px;background:#2DD7C0;border-radius:2px;animation:wave 0.8s ease-in-out infinite alternate}
+.wave-bars i:nth-child(2){animation-delay:0.15s;height:18px}
+.wave-bars i:nth-child(3){animation-delay:0.3s;height:24px}
+.wave-bars i:nth-child(4){animation-delay:0.45s;height:14px}
+.wave-bars i:nth-child(5){animation-delay:0.6s;height:20px}
+@keyframes wave{from{height:4px}to{height:24px}}
 `;
 
 /* ---------- shared bits ---------- */
@@ -419,10 +428,111 @@ function Wizard({ onCancel, onLaunch }) {
   const [posterUrl, setPosterUrl] = useState(null);
   const [uploadingPoster, setUploadingPoster] = useState(false);
 
-  // 2. Voice Note Upload & AI Extraction State
+  // 2. Voice Note (Live In-Page Recording or File Upload)
+  const [voiceMode, setVoiceMode] = useState("record"); // "record" | "upload"
+  const [recording, setRecording] = useState(false);
+  const [recordingSeconds, setRecordingSeconds] = useState(0);
+  const [recordedAudioUrl, setRecordedAudioUrl] = useState(null);
   const [voiceFile, setVoiceFile] = useState(null);
   const [voiceExtracting, setVoiceExtracting] = useState(false);
   const [transcript, setTranscript] = useState("");
+  const mediaRecorderRef = useRef(null);
+  const audioChunksRef = useRef([]);
+  const timerRef = useRef(null);
+
+  const formatTimer = (sec) => `${Math.floor(sec / 60).toString().padStart(2, "0")}:${(sec % 60).toString().padStart(2, "0")}`;
+
+  const startRecording = async () => {
+    try {
+      audioChunksRef.current = [];
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mediaRecorder = new MediaRecorder(stream);
+      mediaRecorderRef.current = mediaRecorder;
+
+      mediaRecorder.ondataavailable = (e) => {
+        if (e.data.size > 0) audioChunksRef.current.push(e.data);
+      };
+
+      mediaRecorder.onstop = async () => {
+        stream.getTracks().forEach((track) => track.stop());
+        const audioBlob = new Blob(audioChunksRef.current, { type: "audio/webm" });
+        const audioUrl = URL.createObjectURL(audioBlob);
+        setRecordedAudioUrl(audioUrl);
+
+        const file = new File([audioBlob], `recorded_brief_${Date.now()}.webm`, { type: "audio/webm" });
+        setVoiceFile(file);
+
+        // Upload and extract using Whisper backend
+        setVoiceExtracting(true);
+        const res = await api.uploadVoiceNote("cmp_001", file);
+        setVoiceExtracting(false);
+        if (res?.transcript) setTranscript(res.transcript);
+        if (res?.event) {
+          setEventData({
+            title: res.event.title || eventData.title,
+            venue: res.event.venue || eventData.venue,
+            city: res.event.city || eventData.city,
+            starts_at: res.event.starts_at ? new Date(res.event.starts_at).toLocaleString() : eventData.starts_at,
+            fee_inr: res.event.fee_inr ?? eventData.fee_inr,
+          });
+        }
+      };
+
+      mediaRecorder.start(200);
+      setRecording(true);
+      setRecordingSeconds(0);
+      timerRef.current = setInterval(() => {
+        setRecordingSeconds((prev) => prev + 1);
+      }, 1000);
+    } catch (err) {
+      console.warn("Microphone access error:", err);
+      const simulate = confirm(
+        "Microphone was not detected or permission was not granted.\n\nWould you like to simulate a spoken voice brief for this demo?"
+      );
+      if (simulate) {
+        setVoiceExtracting(true);
+        setTimeout(async () => {
+          const sampleBlob = new Blob([new Uint8Array([0x1a, 0x45, 0xdf, 0xa3, 0x01, 0x00, 0x00, 0x00])], { type: "audio/webm" });
+          const file = new File([sampleBlob], "demo_voice_note.webm", { type: "audio/webm" });
+          setVoiceFile(file);
+          setRecordedAudioUrl("https://actions.google.com/sounds/v1/speech/person_speaking.ogg");
+          setRecordingSeconds(12);
+          const res = await api.uploadVoiceNote("cmp_001", file);
+          setVoiceExtracting(false);
+          if (res?.transcript) setTranscript(res.transcript);
+          if (res?.event) {
+            setEventData({
+              title: res.event.title || eventData.title,
+              venue: res.event.venue || eventData.venue,
+              city: res.event.city || eventData.city,
+              starts_at: res.event.starts_at ? new Date(res.event.starts_at).toLocaleString() : eventData.starts_at,
+              fee_inr: res.event.fee_inr ?? eventData.fee_inr,
+            });
+          }
+        }, 1200);
+      }
+    }
+  };
+
+  const stopRecording = () => {
+    if (mediaRecorderRef.current && recording) {
+      mediaRecorderRef.current.stop();
+      setRecording(false);
+      clearInterval(timerRef.current);
+    }
+  };
+
+  const cancelRecording = () => {
+    if (mediaRecorderRef.current && recording) {
+      mediaRecorderRef.current.stop();
+      setRecording(false);
+      clearInterval(timerRef.current);
+    }
+    setVoiceFile(null);
+    setRecordedAudioUrl(null);
+    setTranscript("");
+    setRecordingSeconds(0);
+  };
 
   // 3. Extracted Event Details State (feeds Step 3)
   const [eventData, setEventData] = useState({
@@ -527,66 +637,191 @@ function Wizard({ onCancel, onLaunch }) {
           )}
         </div>
 
-        {/* Voice Note Audio Upload Area */}
+        {/* Voice Note: Live In-Page Recording or File Upload */}
         <div
           style={{
             border: "2px dashed #2DD7C0",
             borderRadius: 14,
-            padding: 24,
-            background: voiceFile ? "#f0fcfb" : "#f8fafb",
+            padding: 20,
+            background: recording ? "#fff5f5" : voiceFile ? "#f0fcfb" : "#f8fafb",
             textAlign: "center",
-            cursor: "pointer",
+            display: "flex",
+            flexDirection: "column",
+            justifyContent: "space-between",
             transition: "all .2s ease",
           }}
-          onClick={() => document.getElementById("voice-upload-input")?.click()}
         >
-          <input
-            id="voice-upload-input"
-            type="file"
-            accept="audio/wav,audio/mp3,audio/mpeg,audio/m4a,audio/ogg,audio/webm"
-            style={{ display: "none" }}
-            onChange={async (e) => {
-              const file = e.target.files?.[0];
-              if (!file) return;
-              setVoiceFile(file);
-              setVoiceExtracting(true);
-              const res = await api.uploadVoiceNote("cmp_001", file);
-              setVoiceExtracting(false);
-              if (res?.transcript) setTranscript(res.transcript);
-              if (res?.event) {
-                setEventData({
-                  title: res.event.title || eventData.title,
-                  venue: res.event.venue || eventData.venue,
-                  city: res.event.city || eventData.city,
-                  starts_at: res.event.starts_at ? new Date(res.event.starts_at).toLocaleString() : eventData.starts_at,
-                  fee_inr: res.event.fee_inr ?? eventData.fee_inr,
-                });
-              }
-            }}
-          />
-          {voiceFile ? (
+          {/* Mode Switcher */}
+          <div style={{ display: "flex", background: "#eef2f5", borderRadius: 8, padding: 3, marginBottom: 12 }}>
+            <span
+              style={{
+                flex: 1,
+                padding: "6px 8px",
+                borderRadius: 6,
+                fontSize: 12,
+                cursor: "pointer",
+                fontWeight: voiceMode === "record" ? 700 : 500,
+                background: voiceMode === "record" ? "#fff" : "transparent",
+                color: voiceMode === "record" ? "var(--ink)" : "var(--mut)",
+                boxShadow: voiceMode === "record" ? "0 1px 3px rgba(0,0,0,0.1)" : "none",
+              }}
+              onClick={() => setVoiceMode("record")}
+            >
+              🎙️ Record Live
+            </span>
+            <span
+              style={{
+                flex: 1,
+                padding: "6px 8px",
+                borderRadius: 6,
+                fontSize: 12,
+                cursor: "pointer",
+                fontWeight: voiceMode === "upload" ? 700 : 500,
+                background: voiceMode === "upload" ? "#fff" : "transparent",
+                color: voiceMode === "upload" ? "var(--ink)" : "var(--mut)",
+                boxShadow: voiceMode === "upload" ? "0 1px 3px rgba(0,0,0,0.1)" : "none",
+              }}
+              onClick={() => setVoiceMode("upload")}
+            >
+              📁 Upload Audio File
+            </span>
+          </div>
+
+          {/* Mode 1: Live Voice Recorder */}
+          {voiceMode === "record" && (
             <div>
-              <div style={{ fontSize: 36, marginBottom: 8 }}>🎙️</div>
-              <div style={{ fontWeight: 600, fontSize: 13, color: "var(--ink)" }}>{voiceFile.name}</div>
-              <span className="pill g" style={{ marginTop: 6 }}>
-                {voiceExtracting ? "Transcribing & Extracting with LLM..." : "✓ Voice Brief Extracted"}
-              </span>
-              <div className="hint" style={{ marginTop: 4 }}>Click to change audio</div>
+              {recording ? (
+                <div>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 6 }}>
+                    <span className="rec-dot" />
+                    <b style={{ color: "var(--red)", fontSize: 15 }}>RECORDING: {formatTimer(recordingSeconds)}</b>
+                  </div>
+                  <div className="wave-bars">
+                    <i /><i /><i /><i /><i />
+                  </div>
+                  <div className="hint" style={{ marginBottom: 12 }}>
+                    Speaking event brief... Mention title, venue, dates, and fee.
+                  </div>
+                  <div style={{ display: "flex", gap: 8, justifyContent: "center" }}>
+                    <button
+                      className="btn p"
+                      type="button"
+                      style={{ width: "auto", padding: "8px 18px", fontSize: 13, background: "var(--red)", borderColor: "var(--red)", color: "#fff" }}
+                      onClick={stopRecording}
+                    >
+                      ⏹ Stop & Process
+                    </button>
+                    <button
+                      className="btn"
+                      type="button"
+                      style={{ width: "auto", padding: "8px 14px", fontSize: 13 }}
+                      onClick={cancelRecording}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              ) : voiceFile ? (
+                <div>
+                  <div style={{ fontSize: 28, marginBottom: 4 }}>🎙️</div>
+                  <b>Live Voice Note Captured</b>
+                  {recordedAudioUrl && (
+                    <audio
+                      controls
+                      src={recordedAudioUrl}
+                      style={{ width: "100%", height: 36, margin: "10px 0" }}
+                    />
+                  )}
+                  <div>
+                    <span className="pill g">
+                      {voiceExtracting ? "Transcribing with Whisper AI..." : "✓ Event Extracted by AI"}
+                    </span>
+                  </div>
+                  <button
+                    className="btn-sm"
+                    type="button"
+                    style={{ marginTop: 10 }}
+                    onClick={startRecording}
+                  >
+                    🔄 Record Again
+                  </button>
+                </div>
+              ) : (
+                <div>
+                  <div style={{ fontSize: 36, marginBottom: 8 }}>🎙️</div>
+                  <b>Record Event Voice Brief</b>
+                  <div className="hint" style={{ marginTop: 4 }}>
+                    Speak into your microphone. AI extracts venue, dates, and ticket prices.
+                  </div>
+                  <button
+                    className="btn p"
+                    type="button"
+                    style={{ width: "auto", margin: "14px auto 0", padding: "8px 20px", fontSize: 13, background: "#C0233B", borderColor: "#C0233B", color: "#fff" }}
+                    onClick={startRecording}
+                  >
+                    🔴 Start Recording
+                  </button>
+                </div>
+              )}
             </div>
-          ) : (
-            <div>
-              <div style={{ fontSize: 36, marginBottom: 8 }}>🎙️</div>
-              <b>{voiceExtracting ? "Transcribing audio..." : "Upload Voice Note"}</b>
-              <div className="hint" style={{ marginTop: 4 }}>
-                Click to browse WAV, MP3, M4A or OGG (max 25MB)
-              </div>
-              <button
-                className="btn p"
-                type="button"
-                style={{ width: "auto", margin: "14px auto 0", padding: "6px 16px", fontSize: 12 }}
-              >
-                Choose Audio Brief
-              </button>
+          )}
+
+          {/* Mode 2: Audio File Upload */}
+          {voiceMode === "upload" && (
+            <div
+              style={{ cursor: "pointer" }}
+              onClick={() => document.getElementById("voice-upload-input")?.click()}
+            >
+              <input
+                id="voice-upload-input"
+                type="file"
+                accept="audio/wav,audio/mp3,audio/mpeg,audio/m4a,audio/ogg,audio/webm"
+                style={{ display: "none" }}
+                onChange={async (e) => {
+                  const file = e.target.files?.[0];
+                  if (!file) return;
+                  setVoiceFile(file);
+                  setRecordedAudioUrl(URL.createObjectURL(file));
+                  setVoiceExtracting(true);
+                  const res = await api.uploadVoiceNote("cmp_001", file);
+                  setVoiceExtracting(false);
+                  if (res?.transcript) setTranscript(res.transcript);
+                  if (res?.event) {
+                    setEventData({
+                      title: res.event.title || eventData.title,
+                      venue: res.event.venue || eventData.venue,
+                      city: res.event.city || eventData.city,
+                      starts_at: res.event.starts_at ? new Date(res.event.starts_at).toLocaleString() : eventData.starts_at,
+                      fee_inr: res.event.fee_inr ?? eventData.fee_inr,
+                    });
+                  }
+                }}
+              />
+              {voiceFile ? (
+                <div>
+                  <div style={{ fontSize: 32, marginBottom: 4 }}>📁</div>
+                  <div style={{ fontWeight: 600, fontSize: 13, color: "var(--ink)" }}>{voiceFile.name}</div>
+                  <span className="pill g" style={{ marginTop: 6 }}>
+                    {voiceExtracting ? "Transcribing with Whisper AI..." : "✓ Extracted Event Details"}
+                  </span>
+                  <div className="hint" style={{ marginTop: 4 }}>Click to change audio file</div>
+                </div>
+              ) : (
+                <div>
+                  <div style={{ fontSize: 36, marginBottom: 8 }}>📁</div>
+                  <b>Upload Audio Brief</b>
+                  <div className="hint" style={{ marginTop: 4 }}>
+                    Drop WAV, MP3, M4A or OGG (max 25MB)
+                  </div>
+                  <button
+                    className="btn p"
+                    type="button"
+                    style={{ width: "auto", margin: "14px auto 0", padding: "6px 16px", fontSize: 12 }}
+                  >
+                    Choose Audio File
+                  </button>
+                </div>
+              )}
             </div>
           )}
         </div>
