@@ -8,11 +8,12 @@ import os
 from datetime import datetime
 from typing import Optional
 
-from fastapi import FastAPI, File, HTTPException, Query, UploadFile
+import psycopg
+from fastapi import Depends, FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
-
-from . import auth
+from . import ai_budget, auth, campaigns_db
+from . import auth, campaigns_db
 from . import db as database
 from . import mock_data as db
 from .csv_import import CsvImportError, parse_contacts_csv
@@ -33,14 +34,18 @@ RETRYABLE = {Outcome.no_answer, Outcome.voicemail, Outcome.failed}
 
 app = FastAPI(
     title="EventReach API (mock)", version="0.1.0",
-    description="Mock API with sample data. Auth is not enforced yet. Full phone numbers are never returned.",
+    description=("Campaigns and login use the database when DATABASE_URL is set. Everything else is still mock data. "
+                 "Full phone numbers are never returned."),
 )
 app.add_middleware(
     CORSMiddleware, allow_origins=os.getenv("CORS_ORIGINS", "*").split(","),
     allow_methods=["*"], allow_headers=["*"],
 )
 
-
+@app.exception_handler(ai_budget.AiBudgetExceeded)
+def ai_budget_exceeded(_request, exc: ai_budget.AiBudgetExceeded) -> JSONResponse:
+    """A paid AI call was refused because this month's cap is used up."""
+    return JSONResponse(status_code=429, content={"detail": str(exc)})
 # ---------- helpers ----------
 
 def _campaign(campaign_id: str) -> Campaign:
@@ -91,7 +96,7 @@ def _by_token(token: str) -> tuple[Campaign, Contact]:
 def health():
     """Reports whether the API is up and whether the database is connected.
 
-    Campaign, contact and analytics data are still mock until each endpoint moves to the database.
+    Campaigns are real when the database is connected. Contacts, translations and analytics are still mock.
     """
     if not database.enabled():
         return {"status": "ok", "database": "not configured", "campaign_data": "mock"}
@@ -101,7 +106,7 @@ def health():
     except Exception:
         return JSONResponse({"status": "degraded", "database": "unreachable", "campaign_data": "mock"},
                             status_code=503)
-    return {"status": "ok", "database": "connected", "campaign_data": "mock"}
+    return {"status": "ok", "database": "connected", "campaign_data": "campaigns on database, rest mock"}
 
 
 @app.get("/mock/poster.svg", tags=["System"], include_in_schema=False)
@@ -124,12 +129,22 @@ def templates() -> list[Template]:
 # ---------- campaigns ----------
 
 @app.get("/campaigns", response_model=list[Campaign], tags=["Campaigns"])
-def list_campaigns() -> list[Campaign]:
-    return list(db.CAMPAIGNS.values())
+def list_campaigns(
+    me: Me = Depends(auth.current_organizer), conn: Optional[psycopg.Connection] = Depends(database.get_conn),
+) -> list[Campaign]:
+    """Your campaigns only. Needs login when the database is on."""
+    if conn is None:
+        return list(db.CAMPAIGNS.values())
+    return campaigns_db.list_for(conn, me)
 
 
 @app.post("/campaigns", response_model=Campaign, status_code=201, tags=["Campaigns"])
-def create_campaign(body: CampaignCreate) -> Campaign:
+def create_campaign(
+    body: CampaignCreate, me: Me = Depends(auth.current_organizer),
+    conn: Optional[psycopg.Connection] = Depends(database.get_conn),
+) -> Campaign:
+    if conn is not None:
+        return campaigns_db.create_for(conn, me, body)
     if body.template_key not in {t.key for t in db.TEMPLATES}:
         raise HTTPException(422, "Unknown template")
     cid = f"cmp_{len(db.CAMPAIGNS) + 1:03d}"
@@ -144,12 +159,22 @@ def create_campaign(body: CampaignCreate) -> Campaign:
 
 
 @app.get("/campaigns/{campaign_id}", response_model=Campaign, tags=["Campaigns"])
-def get_campaign(campaign_id: str) -> Campaign:
-    return _campaign(campaign_id)
+def get_campaign(
+    campaign_id: str, me: Me = Depends(auth.current_organizer),
+    conn: Optional[psycopg.Connection] = Depends(database.get_conn),
+) -> Campaign:
+    if conn is None:
+        return _campaign(campaign_id)
+    return campaigns_db.get_for(conn, me, campaign_id)
 
 
 @app.put("/campaigns/{campaign_id}/event", response_model=Campaign, tags=["Campaigns"])
-def save_event(campaign_id: str, event: EventDetails) -> Campaign:
+def save_event(
+    campaign_id: str, event: EventDetails, me: Me = Depends(auth.current_organizer),
+    conn: Optional[psycopg.Connection] = Depends(database.get_conn),
+) -> Campaign:
+    if conn is not None:
+        return campaigns_db.save_event_for(conn, me, campaign_id, event)
     camp = _campaign(campaign_id)
     camp.event = event
     return camp

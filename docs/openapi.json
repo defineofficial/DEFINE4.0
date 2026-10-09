@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "EventReach API (mock)",
-    "description": "Mock API with sample data. Auth is not enforced yet. Full phone numbers are never returned.",
+    "description": "Campaigns and login use the database when DATABASE_URL is set. Everything else is still mock data. Full phone numbers are never returned.",
     "version": "0.1.0"
   },
   "paths": {
@@ -12,7 +12,7 @@
           "System"
         ],
         "summary": "Health",
-        "description": "Reports whether the API is up and whether the database is connected.\n\nCampaign, contact and analytics data are still mock until each endpoint moves to the database.",
+        "description": "Reports whether the API is up and whether the database is connected.\n\nCampaigns are real when the database is connected. Contacts, translations and analytics are still mock.",
         "operationId": "health_health_get",
         "responses": {
           "200": {
@@ -166,6 +166,7 @@
           "Campaigns"
         ],
         "summary": "List Campaigns",
+        "description": "Your campaigns only. Needs login when the database is on.",
         "operationId": "list_campaigns_campaigns_get",
         "responses": {
           "200": {
@@ -182,7 +183,12 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
       },
       "post": {
         "tags": [
@@ -221,7 +227,12 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
       }
     },
     "/campaigns/{campaign_id}": {
@@ -231,6 +242,11 @@
         ],
         "summary": "Get Campaign",
         "operationId": "get_campaign_campaigns__campaign_id__get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "parameters": [
           {
             "name": "campaign_id",
@@ -273,6 +289,11 @@
         ],
         "summary": "Save Event",
         "operationId": "save_event_campaigns__campaign_id__event_put",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "parameters": [
           {
             "name": "campaign_id",
@@ -1429,6 +1450,8 @@
         "properties": {
           "name": {
             "type": "string",
+            "maxLength": 200,
+            "minLength": 1,
             "title": "Name",
             "examples": [
               "AI in Healthcare Seminar"
@@ -1602,13 +1625,15 @@
           },
           "fee_inr": {
             "type": "integer",
+            "minimum": 0.0,
             "title": "Fee Inr",
             "default": 0
           },
           "capacity": {
             "anyOf": [
               {
-                "type": "integer"
+                "type": "integer",
+                "minimum": 1.0
               },
               {
                 "type": "null"

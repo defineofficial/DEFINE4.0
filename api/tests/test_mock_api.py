@@ -66,3 +66,18 @@ def test_unknown_link_is_404():
 def test_opt_out_is_remembered():
     c = client.post("/contacts/ct_013/opt-out").json()
     assert c["opted_out"] is True and c["last_outcome"] == "opted_out"
+
+
+def test_mock_mode_campaigns_still_work_without_login():
+    assert any(c["id"] == "cmp_001" for c in client.get("/campaigns").json())
+    assert client.get("/campaigns/cmp_001").status_code == 200
+    assert client.get("/campaigns/nope").status_code == 404
+
+
+def test_event_validation_applies_in_mock_mode_too():
+    good = {"title": "T", "starts_at": "2026-11-14T10:00:00+05:30", "ends_at": "2026-11-14T16:00:00+05:30",
+            "venue": "V", "city": "Kochi"}
+    assert client.put(f"{C}/event", json=good).status_code == 200
+    assert client.put(f"{C}/event", json={**good, "ends_at": "2026-11-14T08:00:00+05:30"}).status_code == 422
+    assert client.put(f"{C}/event", json={**good, "fee_inr": -5}).status_code == 422
+    assert client.post("/campaigns", json={"name": "", "template_key": "seminar_invite"}).status_code == 422

@@ -8,7 +8,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 # ---------- Shared vocabulary (same words as docs/data-model.md) ----------
@@ -107,13 +107,23 @@ class EventDetails(BaseModel):
     ends_at: Optional[datetime] = None
     venue: str
     city: str
-    fee_inr: int = 0
-    capacity: Optional[int] = None
+    fee_inr: int = Field(default=0, ge=0)
+    capacity: Optional[int] = Field(default=None, ge=1)
     rsvp_deadline: Optional[datetime] = None
+
+    @model_validator(mode="after")
+    def _ends_after_start(self):
+        if self.ends_at is not None:
+            try:
+                if self.ends_at < self.starts_at:
+                    raise ValueError("ends_at must be after starts_at")
+            except TypeError:
+                raise ValueError("Send both times with a time zone, for example +05:30") from None
+        return self
 
 
 class CampaignCreate(BaseModel):
-    name: str = Field(examples=["AI in Healthcare Seminar"])
+    name: str = Field(min_length=1, max_length=200, examples=["AI in Healthcare Seminar"])
     template_key: str = Field(examples=["seminar_invite"])
 
 
