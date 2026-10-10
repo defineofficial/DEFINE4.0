@@ -87,7 +87,7 @@ MESSAGES: Dict[str, Dict[Language, Dict[Channel, Dict[str, str]]]] = {
                 "voicemail": "Hello {name}, invitation to {event_title} on {date} in {city}. Please call us back on the number displayed on your phone.",
             },
             Channel.sms: {
-                "body": "Hi {name}, you're invited to {event_title} on {date} at {time}. Venue: {venue}. Register: {link}",
+                "body": "Hi {name}, you're invited to {event_title} on {date} at {time}. Venue: {venue}, {city}. Register: {link}",
             },
             Channel.whatsapp: {
                 "body": "Hi *{name}*,\n\nYou are invited to *{event_title}*.\n📅 Date: {date} at {time}\n📍 Venue: {venue}, {city}\n\n👉 Register here: {link}",

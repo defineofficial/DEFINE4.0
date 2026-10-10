@@ -6,7 +6,7 @@ If you change a field here, re-export the OpenAPI file and tell the team.
 """
 from datetime import datetime
 from enum import Enum
-from typing import Optional
+from typing import Any, Optional
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -50,6 +50,13 @@ class Channel(str, Enum):
 
 class CampaignStatus(str, Enum):
     draft = "draft"
+    details_approved = "details_approved"
+    audience_ready = "audience_ready"
+    translations_approved = "translations_approved"
+    content_ready = "content_ready"
+    tested = "tested"
+    launched = "launched"
+    needs_regeneration = "needs_regeneration"
     ready = "ready"
     running = "running"
     completed = "completed"
@@ -150,6 +157,11 @@ class EventDraft(BaseModel):
     detected_language: Language
     event: EventDetails
     needs_review: list[str] = Field(description="Field names the model was unsure about")
+    evidence: Optional[dict[str, Any]] = Field(default=None, description="Per-field evidence quotes and source")
+    conflicts: Optional[dict[str, Any]] = Field(default=None, description="Voice vs poster conflicting field values")
+    title_candidates: list[str] = Field(default_factory=list, description="Top title candidates")
+    poster_text: Optional[str] = Field(default=None, description="Raw text read from poster image")
+    prompt_version: str = Field(default="v1", description="Prompt template version used for extraction")
 
 
 # ---------- Audience ----------
@@ -204,6 +216,55 @@ class Translation(BaseModel):
     social_caption: Optional[str] = None
     back_translation_en: str = Field(description="English rendering of the translation, so the organizer can check it")
     approved: bool = False
+    event_version: int = Field(default=1, description="Event version this translation was generated from")
+    event_content_hash: Optional[str] = Field(default=None, description="Event content hash")
+    status: str = Field(default="generated", description="Status: generated, edited, approved, stale")
+    fact_check: Optional[dict[str, Any]] = Field(default=None, description="Automatic fact check results")
+    placeholder_errors: list[str] = Field(default_factory=list, description="Missing or altered placeholders")
+
+
+# ---------- Outreach Content ----------
+
+class OutreachItem(BaseModel):
+    id: str
+    campaign_id: str
+    channel: Channel
+    language: Language
+    segment: str = "General"
+    subject: Optional[str] = None
+    body: str
+    whatsapp_template_name: Optional[str] = None
+    hashtags: list[str] = Field(default_factory=list)
+    media_url: Optional[str] = None
+    event_version: int = 1
+    status: str = "draft"
+    approved: bool = False
+    fact_check: Optional[dict[str, Any]] = None
+    segment_count: int = 1
+    created_at: datetime = Field(default_factory=datetime.now)
+
+
+class OutreachLog(BaseModel):
+    id: str
+    item_id: str
+    contact_id: str
+    channel: Channel
+    recipient_masked: str
+    status: str
+    sent_at: datetime = Field(default_factory=datetime.now)
+    error: Optional[str] = None
+
+
+class TestSendRequest(BaseModel):
+    channel: Channel
+    language: Language = Language.en
+    target: str = Field(description="Email address or phone number for test send")
+
+
+class PreflightResult(BaseModel):
+    can_launch: bool
+    blockers: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
 
 
 # ---------- Launch and test ----------

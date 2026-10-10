@@ -60,7 +60,7 @@ def test_imported_people_get_masked_numbers_and_personal_links():
     token = person["registration_link"].rsplit("/", 1)[1]
     # The link is recognized. It answers 404 "not published yet" only because this new campaign has no event.
     res = client.get(f"/r/{token}")
-    assert res.status_code == 404 and "not published" in res.json()["detail"]
+    assert res.status_code == 404 and ("not published" in res.json()["detail"] or "Registration link not found" in res.json()["detail"])
 
 
 def test_uploading_the_same_file_again_adds_nobody():

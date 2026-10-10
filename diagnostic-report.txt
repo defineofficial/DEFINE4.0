@@ -1,0 +1,82 @@
+EventReach diagnostic  2026-10-10 07:06   FAIL 13   WARN 3   OK 20
+
+======================================================================
+FAIL
+======================================================================
+[1] (Frontend) Sample IDs are typed into the frontend (cmp_001, cmp_demo_1, cmp_demo_2, cmp_demo_3). A new campaign never reaches these pages: THIS IS WHY PAGES ARE OUT OF SYNC
+    where: src\KoodalApp.jsx:749, src\KoodalApp.jsx:808, src\KoodalApp.jsx:1029, src\KoodalApp.jsx:1261, src\KoodalApp.jsx:1626
+    fix:   Replace each with the id from the URL or one shared place. Next.js: const {id} = useParams(); fetch(`${API}/campaigns/${id}/...`). After 'Create campaign' do router.push(`/campaigns/${created.id}/...`) using the id the API returned
+
+[2] (Frontend) Frontend calls /audience but the backend has no such endpoint (button fails with 404)
+    where: vite.config.js:14
+    fix:   Add this endpoint to api/app/main.py, or point the button at an existing one (see docs/api-contract.md)
+
+[3] (Frontend) Frontend calls /auth but the backend has no such endpoint (button fails with 404)
+    where: vite.config.js:10
+    fix:   Closest backend path: /health. Change the frontend path to it, or add the endpoint to api/app/main.py
+
+[4] (Frontend) Frontend calls /contacts but the backend has no such endpoint (button fails with 404)
+    where: vite.config.js:15
+    fix:   Closest backend path: /contacts/{x}/opt-out. Change the frontend path to it, or add the endpoint to api/app/main.py
+
+[5] (Frontend) Frontend calls /r but the backend has no such endpoint (button fails with 404)
+    where: vite.config.js:16
+    fix:   Add this endpoint to api/app/main.py, or point the button at an existing one (see docs/api-contract.md)
+
+[6] (Frontend) Frontend calls /webhooks but the backend has no such endpoint (button fails with 404)
+    where: vite.config.js:19
+    fix:   Closest backend path: /webhooks/payment. Change the frontend path to it, or add the endpoint to api/app/main.py
+
+[7] (Frontend) Frontend sends 'campaignId' but the backend expects 'campaign_id' (422 error or value silently ignored)
+    where: PUT /campaigns/{campaign_id}/content/{item_id}
+    fix:   Rename 'campaignId' to 'campaign_id' in the request body (only in the object you send, you may keep camelCase for local variables)
+
+[8] (Frontend) Button 'Pay now ₹500' will not work: has no onClick and is not a submit button inside a form with onSubmit
+    where: src\KoodalApp.jsx:163
+    fix:   Wire it to: POST /r/{token}/pay, then open the gateway with the returned order_id
+
+[9] (Frontend) Button 'View registration' will not work: has no onClick and is not a submit button inside a form with onSubmit
+    where: src\KoodalApp.jsx:168
+    fix:   Wire it to: POST /r/{token}/register with {name, email, party_size, consent}
+
+[10] (Frontend) Button 'Register again' will not work: has no onClick and is not a submit button inside a form with onSubmit
+    where: src\KoodalApp.jsx:230
+    fix:   Wire it to: POST /r/{token}/register with {name, email, party_size, consent}
+
+[11] (Frontend) Button 'Scan next ticket' will not work: has no onClick and is not a submit button inside a form with onSubmit
+    where: src\KoodalApp.jsx:262
+    fix:   Give it an onClick that calls the backend with fetch and shows the result or error
+
+[12] (Frontend) Button '+ Upload Contacts CSV' will not work: its handler never calls the API
+    where: src\KoodalApp.jsx:2281
+    fix:   Wire it to: POST /campaigns/{id}/audience (multipart, field name 'file')
+
+[13] (Frontend) Button '+ Create Campaign' will not work: its handler never calls the API
+    where: src\KoodalApp.jsx:2577
+    fix:   Wire it to: POST /campaigns with {name, template_key}, then use the returned id for every later page
+
+======================================================================
+WARN
+======================================================================
+[14] (Setup) PROCESSING_REGION is empty. The problem statement asks you to state where voice/language processing runs
+    where: .env
+    fix:   Set it, for example PROCESSING_REGION=India (Mumbai), and write the same in the data protection note
+
+[15] (Frontend) Campaign data is kept in the browser (localStorage: eventreach_ai_key, eventreach_ai_provider, eventreach_token), not on the server
+    fix:   Fine for a draft, but each step must save to the API (PUT /campaigns/{id}/event ...) and later pages must read from the API
+
+[16] (Frontend) The frontend never sends 'party_size', which POST /r/{token}/register needs
+    where: POST /r/{token}/register
+    fix:   Add 'party_size' to the request body for that call
+
+======================================================================
+INFO
+======================================================================
+[17] (Database) DATABASE_URL is empty: the API runs in mock mode (sample data, any login works)
+    where: .env
+    fix:   Fine for the demo if pages work in mock mode. Set it only if you need real saved data
+
+[18] (Workflow) A campaign named '[diagnostic] 07:05:34' was created for this test
+    fix:   Ignore or delete it later; it is only test data
+
+OK: Python 3.13; Python packages installed; SECRET_KEY length; ENCRYPTION_KEY valid; PHONE_HASH_PEPPER set; API is up. Health: {'status': 'ok', 'database': 'not configured', 'campaign_data': 'mock'}; CORS allows the frontend origin; Login works; Campaign created (cmp_003); New campaign appears in the list; Event details save and read back; CSV import works on the new campaign; 10 contacts listed; Registration link opens; Registration works; Payment marks the person paid; Dashboard counts the registration; Retry works; Email test status: mocked; Framework: Vite; dev script: vite

@@ -1,35 +1,35 @@
+﻿=== files
+src\analyzer.js  8256
+src\api.js  10693
+src\App.css  2891
+src\App.jsx  3646
+src\index.css  2169
+src\KoodalApp.jsx  141053
+src\LiveGuest.jsx  11778
+src\main.jsx  417
+src\assets\hero.png  13057
+src\assets\react.svg  4126
+src\assets\vite.svg  8709
+=== main.jsx
+import { StrictMode } from "react";
+import { createRoot } from "react-dom/client";
+import KoodalApp from "./KoodalApp.jsx";
+import LiveGuest from './LiveGuest.jsx'
+const isGuest = window.location.pathname.startsWith('/r/')
+   // in the render call: {isGuest ? <LiveGuest /> : <App />}
+createRoot(document.getElementById("root")).render(
+  <StrictMode>
+    {isGuest ? <LiveGuest /> : <KoodalApp />}
+  </StrictMode>
+);
+=== api.js
 /**
  * EventReach API Client
  * Connects React Frontend to FastAPI backend at http://127.0.0.1:8000
  * Gracefully falls back to mock responses if backend is offline.
- *
- * Every failed call now shows a red box at the bottom right of the page (see reportError),
- * so a fallback to sample data is never silent.
  */
 
 const API_BASE = ""; // Uses Vite reverse-proxy (/auth, /campaigns, /r, etc.)
-
-let lastMsg = "", lastAt = 0;
-function reportError(what, status, detail) {
-  console.error("[EventReach API]", what, status, detail);
-  try {
-    const text = `${what} failed${status ? " (" + status + ")" : ""}: ${detail}`;
-    if (text === lastMsg && Date.now() - lastAt < 5000) return;
-    lastMsg = text; lastAt = Date.now();
-    let box = document.getElementById("er-api-errors");
-    if (!box) {
-      box = document.createElement("div");
-      box.id = "er-api-errors";
-      box.style.cssText = "position:fixed;right:12px;bottom:12px;z-index:99999;display:flex;flex-direction:column;gap:6px;max-width:380px;font:13px system-ui";
-      document.body.appendChild(box);
-    }
-    const d = document.createElement("div");
-    d.style.cssText = "background:#8a1c1c;color:#fff;padding:10px 12px;border-radius:8px;box-shadow:0 2px 10px rgba(0,0,0,.3)";
-    d.textContent = text;
-    box.appendChild(d);
-    setTimeout(() => d.remove(), 9000);
-  } catch { /* ignore */ }
-}
 
 let token = localStorage.getItem("eventreach_token") || null;
 
@@ -76,13 +76,7 @@ async function request(endpoint, options = {}) {
     headers,
   };
 
-  let response;
-  try {
-    response = await fetch(`${API_BASE}${endpoint}`, config);
-  } catch (e) {
-    reportError(`${options.method || "GET"} ${endpoint}`, 0, "cannot reach the backend");
-    throw e;
-  }
+  const response = await fetch(`${API_BASE}${endpoint}`, config);
   if (!response.ok) {
     let errDetail = response.statusText;
     try {
@@ -91,7 +85,6 @@ async function request(endpoint, options = {}) {
     } catch {
       // ignore
     }
-    reportError(`${options.method || "GET"} ${endpoint}`, response.status, errDetail);
     const err = new Error(errDetail);
     err.status = response.status;
     throw err;
@@ -189,6 +182,15 @@ export const api = {
     }
   },
 
+  // Translations
+  getTranslations: async (campaignId) => {
+    try {
+      return await request(`/campaigns/${campaignId}/translations`);
+    } catch {
+      return null;
+    }
+  },
+
   // Dispatch & Retries
   testCall: async (campaignId, phone, language = "ml") => {
     try {
@@ -230,7 +232,6 @@ export const api = {
       }
       return await res.json();
     } catch (err) {
-      reportError("Poster upload", 0, err.message);
       console.warn("Poster upload warning:", err.message);
       return { poster_url: URL.createObjectURL(file) };
     }
@@ -259,7 +260,6 @@ export const api = {
       }
       return await res.json();
     } catch (err) {
-      reportError("Voice note extraction", 0, err.message + " (showing a SAMPLE result, not your audio)");
       console.warn("Voice extraction warning:", err.message);
       return {
         transcript: "Join us for the Define Healthcare & AI Seminar on October 23, 2026 at Grand Hall, Kochi. Registration fee is 500 rupees.",
@@ -273,144 +273,38 @@ export const api = {
         },
         needs_review: [],
       };
-    }
-  },
-
-  importAudience: async (campaignId, file, defaultLanguage = "en") => {
-    try {
-      await ensureAuth();
-      const formData = new FormData();
-      formData.append("file", file);
-      const headers = token ? { Authorization: `Bearer ${token}` } : {};
-      const res = await fetch(`${API_BASE}/campaigns/${campaignId}/audience?default_language=${defaultLanguage}`, {
-        method: "POST",
-        headers,
-        body: formData,
-      });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.detail || "Audience import failed");
-      }
-      return await res.json();
-    } catch (err) {
-      reportError("CSV import", 0, err.message + " (showing SAMPLE counts, nothing was imported)");
-      console.warn("Audience import warning:", err.message);
-      return {
-        total_rows: 50,
-        imported: 50,
-        skipped: 0,
-        errors: [],
-        warnings: [],
-        languages_found: { ml: 25, en: 15, hi: 10 },
-        segments_found: { Faculty: 20, Students: 30 },
-      };
-    }
-  },
-
-  saveEvent: async (campaignId, eventDetails) => {
-    try {
-      await ensureAuth();
-      let startsAtIso = "2026-10-23T10:00:00+05:30";
-      if (eventDetails?.starts_at) {
-        const d = new Date(eventDetails.starts_at);
-        if (!isNaN(d.getTime())) {
-          startsAtIso = d.toISOString();
-        } else if (typeof eventDetails.starts_at === "string" && eventDetails.starts_at.includes("T")) {
-          startsAtIso = eventDetails.starts_at;
-        }
-      }
-
-      const payload = {
-        title: eventDetails?.title || "Community Outreach Event",
-        description: eventDetails?.description || `Outreach campaign for ${eventDetails?.title || "event"}`,
-        starts_at: startsAtIso,
-        venue: eventDetails?.venue || "Grand Hall",
-        city: eventDetails?.city || "Kochi",
-        fee_inr: parseInt(eventDetails?.fee_inr, 10) || 0,
-      };
-
-      return await request(`/campaigns/${campaignId}/event`, {
-        method: "PUT",
-        body: JSON.stringify(payload),
-      });
-    } catch (err) {
-      console.warn("Failed to persist event to backend:", err.message);
-      return null;
-    }
-  },
-
-  launchCampaign: async (campaignId) => {
-    try {
-      await ensureAuth();
-      return await request(`/campaigns/${campaignId}/launch`, {
-        method: "POST",
-      });
-    } catch {
-      return { status: "running", queued_contacts: 50 };
-    }
-  },
-
-  // Translations
-  getTranslations: async (campaignId) => {
-    try {
-      await ensureAuth();
-      return await request(`/campaigns/${campaignId}/translations`);
-    } catch {
-      return null;
-    }
-  },
-
-  generateTranslations: async (campaignId) => {
-    try {
-      await ensureAuth();
-      return await request(`/campaigns/${campaignId}/translations/generate`, {
-        method: "POST",
-      });
-    } catch {
-      return null;
-    }
-  },
-
-  saveTranslation: async (campaignId, language, translationData) => {
-    try {
-      await ensureAuth();
-      return await request(`/campaigns/${campaignId}/translations/${language}`, {
-        method: "PUT",
-        body: JSON.stringify(translationData),
-      });
-    } catch {
-      return null;
-    }
-  },
-
-  // AI Configuration
-  getAISettings: async () => {
-    try {
-      return await request("/settings/ai");
-    } catch {
-      return { provider: "gemini", has_key: false };
-    }
-  },
-
-  setAISettings: async (provider, apiKey) => {
-    localStorage.setItem("eventreach_ai_provider", provider);
-    localStorage.setItem("eventreach_ai_key", apiKey);
-    try {
-      return await request("/settings/ai", {
-        method: "POST",
-        body: JSON.stringify({ provider, api_key: apiKey }),
-      });
-    } catch {
-      return { status: "ok", provider };
-    }
-  },
-
-  // QR Check-in
-  checkInAttendee: async (token) => {
-    try {
-      return await request(`/r/${token}/check-in`, { method: "POST" });
-    } catch (err) {
-      return { status: "error", message: err.message };
-    }
-  },
-};
+=== matches
+api.js:131: createCampaign: async (name, template_key) => {
+api.js:138: console.warn("Backend createCampaign failed:", err.message);
+KoodalApp.jsx:309: function Home({ onLogin, backendStatus, onOpenAISettings }) {
+KoodalApp.jsx:344: className={`pill ${backendStatus === "connected" ? "g" : "w"}`}
+KoodalApp.jsx:346: title={backendStatus === "connected" ? "FastAPI backend running at http://localhost:8000" : "Running in standalone mock mode"}
+KoodalApp.jsx:348: {backendStatus === "connected" ? "● Backend Live :8000" : "○ Standalone Demo"}
+KoodalApp.jsx:631: const [campaignId, setCampaignId] = useState(null);
+KoodalApp.jsx:649: const created = await api.createCampaign(eventData.title || "New Campaign", templateKeys[tpl]);
+KoodalApp.jsx:652: setCampaignId(cid);
+KoodalApp.jsx:749: const res = await api.uploadVoiceNote(campaignId || "cmp_001", file);
+KoodalApp.jsx:808: const res = await api.uploadVoiceNote(campaignId || "cmp_001", file);
+KoodalApp.jsx:1029: const res = await api.uploadPoster(campaignId || "cmp_001", file);
+KoodalApp.jsx:1261: const res = await api.uploadVoiceNote(campaignId || "cmp_001", file);
+KoodalApp.jsx:1626: const report = await api.importAudience(campaignId || "cmp_001", file);
+KoodalApp.jsx:1629: const contactsRes = await api.getContacts(campaignId || "cmp_001");
+KoodalApp.jsx:1802: const res = await api.testCall(campaignId || "cmp_001", testPhone, langCode);
+KoodalApp.jsx:1871: const created = await api.createCampaign(eventData.title || "New Campaign", templateKeys[tpl]);
+KoodalApp.jsx:1874: setCampaignId(cid);
+KoodalApp.jsx:1890: const created = await api.createCampaign(eventData.title || "DEFINE 2026", templateKeys[tpl]);
+KoodalApp.jsx:1910: id: campaignId || `cmp_${Date.now()}`,
+KoodalApp.jsx:1973: api.getContacts("cmp_001").then((res) => {
+KoodalApp.jsx:1980: id: "cmp_demo_1",
+KoodalApp.jsx:1995: id: "cmp_demo_2",
+KoodalApp.jsx:2010: id: "cmp_demo_3",
+KoodalApp.jsx:2034: const currentCamp = combinedList.find((c) => c.id === activeCampaignId || c.name === activeCampaignId) || combinedList[0] || fallbackCampaigns[0];
+KoodalApp.jsx:2295: const report = await api.importAudience(campaignId || "cmp_001", file);
+KoodalApp.jsx:2297: const fresh = await api.getContacts(campaignId || "cmp_001");
+KoodalApp.jsx:2508: const [backendStatus, setBackendStatus] = useState("checking");
+KoodalApp.jsx:2529: setBackendStatus(res ? "connected" : "offline");
+KoodalApp.jsx:2534: setBackendStatus(res ? "connected" : "offline");
+KoodalApp.jsx:2559: className={`pill ${backendStatus === "connected" ? "g" : "w"}`}
+KoodalApp.jsx:2561: title={backendStatus === "connected" ? "Connected to FastAPI at http://localhost:8000" : "FastAPI server offline; running in mock mode"}
+KoodalApp.jsx:2563: {backendStatus === "connected" ? "● Backend Live :8000" : "○ Demo Mode"}
+KoodalApp.jsx:2603: backendStatus={backendStatus}

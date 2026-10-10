@@ -80,6 +80,9 @@ CREATE TABLE campaign_contacts (
   last_outcome       outcome NOT NULL DEFAULT 'pending',
   attempts           int NOT NULL DEFAULT 0,
   registration_token text NOT NULL UNIQUE,   -- random, unguessable, goes in the personal link
+  token_hash         text,
+  token_expires_at   timestamptz,
+  token_used_at      timestamptz,
   UNIQUE (campaign_id, contact_id)
 );
 CREATE INDEX ON campaign_contacts (campaign_id, language);
@@ -122,8 +125,14 @@ CREATE TABLE payments (
   campaign_contact_id uuid NOT NULL REFERENCES campaign_contacts(id) ON DELETE CASCADE,
   provider_order_id   text NOT NULL UNIQUE,
   amount_inr          int NOT NULL,
-  status              text NOT NULL DEFAULT 'created',   -- created, paid, failed, refunded
-  paid_at             timestamptz
+  currency            text NOT NULL DEFAULT 'INR',
+  status              text NOT NULL DEFAULT 'created',   -- created, paid, failed, expired, refunded
+  gateway_key_id      text,
+  gateway_payment_id  text,
+  gateway_event_id    text,
+  hold_expires_at     timestamptz,
+  paid_at             timestamptz,
+  created_at          timestamptz NOT NULL DEFAULT now()
 );
 
 CREATE TABLE opt_outs (

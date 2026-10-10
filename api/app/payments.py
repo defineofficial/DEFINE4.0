@@ -92,6 +92,15 @@ def process_payment_webhook(order_id: str, status: str, event_id: Optional[str] 
     if status.lower() in ("paid", "captured", "success"):
         order["status"] = "paid"
         order["paid_at"] = datetime.now(timezone.utc)
+        try:
+            from app import mock_data as db
+            for group in db.CONTACTS.values():
+                for c in group:
+                    if c.id == order["contact_id"]:
+                        c.stage = Stage.paid
+                        c.last_outcome = Outcome.confirmed
+        except Exception:
+            pass
     elif status.lower() in ("failed", "cancelled"):
         order["status"] = "failed"
 

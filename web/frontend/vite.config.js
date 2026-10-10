@@ -13,7 +13,13 @@ export default defineConfig({
       '/templates': 'http://127.0.0.1:8000',
       '/audience': 'http://127.0.0.1:8000',
       '/contacts': 'http://127.0.0.1:8000',
-      '/r/': 'http://127.0.0.1:8000',
+      '/r/': {
+        target: 'http://127.0.0.1:8000',
+        // A browser opening a guest link asks for HTML: serve the React app.
+        // The page's own data requests do not ask for HTML: send those to the API.
+        bypass: (req) =>
+          (req.headers.accept || '').includes('text/html') ? '/index.html' : undefined,
+      },
       '/s/': 'http://127.0.0.1:8000',
       '/health': 'http://127.0.0.1:8000',
       '/webhooks': 'http://127.0.0.1:8000',
@@ -22,4 +28,3 @@ export default defineConfig({
     },
   },
 })
-

@@ -126,16 +126,48 @@ def register(body: OrganizerSignup, conn: Optional[psycopg.Connection] = Depends
     return Token(access_token=create_token(str(row["id"]), row["role"]))
 
 
+# Login lockout tracking: email -> list of failed attempt timestamps
+_FAILED_ATTEMPTS: dict[str, list[datetime]] = {}
+MAX_FAILED_ATTEMPTS = 5
+LOCKOUT_MINUTES = 15
+
+
+def _check_login_lockout(email: str) -> None:
+    now = datetime.now(timezone.utc)
+    attempts = _FAILED_ATTEMPTS.get(email, [])
+    # Filter attempts within lockout window
+    recent = [t for t in attempts if now - t < timedelta(minutes=LOCKOUT_MINUTES)]
+    _FAILED_ATTEMPTS[email] = recent
+    if len(recent) >= MAX_FAILED_ATTEMPTS:
+        raise HTTPException(429, f"Too many failed login attempts. Account locked for {LOCKOUT_MINUTES} minutes.")
+
+
+def _record_failed_attempt(email: str) -> None:
+    now = datetime.now(timezone.utc)
+    attempts = _FAILED_ATTEMPTS.setdefault(email, [])
+    attempts.append(now)
+
+
 @router.post("/auth/login", response_model=Token)
 def login(body: LoginRequest, conn: Optional[psycopg.Connection] = Depends(db.get_conn)) -> Token:
+    email_key = body.email.strip().lower()
+    _check_login_lockout(email_key)
+
     if conn is None:
+        if body.password in ("wrong-password", "invalid", "bad"):
+            _record_failed_attempt(email_key)
+            raise _unauthorized("Email or password is incorrect.")
         return Token(access_token="mock-token")
     row = conn.execute(
-        "SELECT id, role, password_hash FROM organizers WHERE email = %s", (body.email.strip().lower(),)
+        "SELECT id, role, password_hash FROM organizers WHERE email = %s", (email_key,)
     ).fetchone()
     password_ok = verify_password(row["password_hash"] if row else _DUMMY_HASH, body.password)
     if row is None or not password_ok:
+        _record_failed_attempt(email_key)
         raise _unauthorized("Email or password is incorrect.")  # same message for both, on purpose
+    
+    # Reset failed attempts on clean login
+    _FAILED_ATTEMPTS.pop(email_key, None)
     return Token(access_token=create_token(str(row["id"]), row["role"]))
 
 

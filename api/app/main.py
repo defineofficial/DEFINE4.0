@@ -4,6 +4,9 @@ Every endpoint the frontend needs, returning realistic sample data.
 State lives in memory and resets when the server restarts.
 Real logic replaces these handlers one by one. Keep the schemas in schemas.py the same.
 """
+from . import email_routes
+from . import feedback_routes
+
 import os
 from datetime import datetime, timezone
 from typing import Optional
@@ -12,17 +15,18 @@ import psycopg
 from fastapi import Depends, FastAPI, File, Header, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse, Response
-from . import ai_budget, auth, calendar_invite, campaigns_db, channels, payments, qr_checkin, storage, storage_routes, template_engine, translation_engine, voice_pipeline
+from . import ai_budget, auth, calendar_invite, campaigns_db, channels, contacts_db, event_versioning, glossary, outreach, payments, preflight, qr_checkin, registration_db, storage, storage_routes, template_engine, translation_engine, voice_pipeline
 from . import db as database
 from . import mock_data as db
 from .csv_import import CsvImportError, parse_contacts_csv
 from .schemas import (
-    BreakdownRow, Campaign, CampaignCreate, CampaignStatus, Contact, ContactPage,
+    BreakdownRow, Campaign, CampaignCreate, CampaignStatus, Channel, Contact, ContactPage,
     EventDetails, EventDraft, Funnel, ImportReport, Language, LaunchResult, LoginRequest, Me,
-    Outcome, PaymentOrder, PaymentWebhook, PosterResult, RegisterRequest, RegisterResult,
+    Outcome, OutreachItem, OutreachLog, PaymentOrder, PaymentWebhook, PosterResult, PreflightResult, RegisterRequest, RegisterResult,
     RegistrationPage, RetryRequest, RetryResult, RetryTarget, RowError, Stage, TestCallRequest,
-    TestCallResult, Token, Translation, Template,
+    TestCallResult, TestSendRequest, Token, Translation, Template,
 )
+
 
 MAX_ATTEMPTS = 3
 MAX_UPLOAD_BYTES = 2 * 1024 * 1024
@@ -188,12 +192,41 @@ def save_event(
     campaign_id: str, event: EventDetails, me: Me = Depends(auth.current_organizer),
     conn: Optional[psycopg.Connection] = Depends(database.get_conn),
 ) -> Campaign:
-    if conn is not None and campaign_id not in db.CAMPAIGNS:
+    # When the database is on, ALL campaign IDs route through campaigns_db.
+    # Mock IDs (cmp_001, cmp_002) are only present when DATABASE_URL is empty.
+    if conn is not None:
         return campaigns_db.save_event_for(conn, me, campaign_id, event)
     camp = _campaign(campaign_id)
+    
+    current_ver = getattr(camp, "_event_version", 1)
+    current_hash = getattr(camp, "_event_content_hash", None)
+    
+    new_ver, new_hash, changed = event_versioning.update_event_record(
+        existing_event=camp.event,
+        existing_version=current_ver,
+        existing_hash=current_hash,
+        new_event=event,
+    )
+    
     camp.event = event
+    setattr(camp, "_event_version", new_ver)
+    setattr(camp, "_event_content_hash", new_hash)
+    
     if event.title and event.title.strip():
         camp.name = event.title.strip()
+        
+    # Check existing translations and propagate staleness
+    existing_trans = db.TRANSLATIONS.get(campaign_id, [])
+    if existing_trans:
+        updated_trans, any_stale = event_versioning.propagate_staleness(existing_trans, new_ver, new_hash)
+        db.TRANSLATIONS[campaign_id] = updated_trans
+        if any_stale:
+            camp.status = CampaignStatus.needs_regeneration
+        else:
+            camp.status = CampaignStatus.details_approved
+    else:
+        camp.status = CampaignStatus.details_approved
+
     return camp
 
 
@@ -300,16 +333,41 @@ async def import_audience(
     campaign_id: str,
     file: UploadFile = File(...),
     default_language: Language = Query(Language.en, description="Used when a row has no language or an unsupported one"),
+    me: Me = Depends(auth.current_organizer),
+    conn: Optional[psycopg.Connection] = Depends(database.get_conn),
 ) -> ImportReport:
     """Real import. Validates every row, skips bad ones, and adds the rest to the campaign.
 
     Uploading again adds only people who are not in the campaign yet.
     Numbers that opted out in any campaign are skipped.
+    Phone numbers are stored encrypted (phone_enc) and hashed (phone_hash); full numbers never leave this function.
     """
-    _campaign(campaign_id)
     raw = await file.read(MAX_UPLOAD_BYTES + 1)
     if len(raw) > MAX_UPLOAD_BYTES:
         raise HTTPException(413, "The file is larger than 2 MB. Split it into smaller files.")
+
+    if conn is not None:
+        # Database mode: ownership check + dedup from real tables.
+        # campaigns_db.get_for raises 404 if the campaign belongs to someone else.
+        campaigns_db.get_for(conn, me, campaign_id)
+        existing = contacts_db.get_existing_hashes(conn, campaign_id)
+        opted_out = contacts_db.get_opted_out_hashes(conn)
+        try:
+            result = parse_contacts_csv(
+                raw, default_language=default_language,
+                existing_hashes=existing,
+                opted_out_hashes=opted_out,
+            )
+        except CsvImportError as exc:
+            raise HTTPException(422, str(exc))
+        try:
+            contacts_db.add_contacts_for(conn, me, campaign_id, result.contacts)
+        except ValueError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        return result.report
+
+    # Mock mode: fall back to in-memory store.
+    _campaign(campaign_id)
     try:
         result = parse_contacts_csv(
             raw, default_language=default_language,
@@ -331,7 +389,22 @@ def list_contacts(
     stage: Optional[Stage] = None,
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
+    me: Me = Depends(auth.current_organizer),
+    conn: Optional[psycopg.Connection] = Depends(database.get_conn),
 ) -> ContactPage:
+    """List contacts for a campaign. Requires login when the database is on."""
+    if conn is not None:
+        items, total = contacts_db.list_for_campaign(
+            conn, me, campaign_id,
+            language=language.value if language else None,
+            segment=segment,
+            outcome=outcome.value if outcome else None,
+            stage=stage.value if stage else None,
+            limit=limit,
+            offset=offset,
+        )
+        return ContactPage(items=items, total=total)
+    # Mock mode.
     items = _contacts(campaign_id)
     if language:
         items = [c for c in items if c.language == language]
@@ -360,12 +433,30 @@ def opt_out(contact_id: str) -> Contact:
 
 # ---------- translations ----------
 
+@app.get("/campaigns/{campaign_id}/languages", tags=["Translations"])
+def list_campaign_languages(
+    campaign_id: str,
+    me: Me = Depends(auth.current_organizer),
+    conn: Optional[psycopg.Connection] = Depends(database.get_conn),
+):
+    """Returns languages found in audience with counts."""
+    if conn is not None and campaign_id not in db.CAMPAIGNS:
+        return contacts_db.count_languages_for(conn, me, campaign_id)
+    contacts = _contacts(campaign_id)
+    counts: dict[str, int] = {}
+    for c in contacts:
+        l = c.language.value if hasattr(c.language, "value") else str(c.language)
+        counts[l] = counts.get(l, 0) + 1
+    return [{"language": k, "count": v} for k, v in counts.items()]
+
+
 @app.get("/campaigns/{campaign_id}/translations", response_model=list[Translation], tags=["Translations"])
 def list_translations(campaign_id: str) -> list[Translation]:
     camp = _campaign(campaign_id)
     items = db.TRANSLATIONS.get(campaign_id, [])
     if not items and camp.event and camp.languages:
-        items = translation_engine.generate_translations(campaign_id, camp.event, camp.languages)
+        ev_ver = getattr(camp, "_event_version", 1)
+        items = translation_engine.generate_translations(campaign_id, camp.event, camp.languages, event_version=ev_ver)
         db.TRANSLATIONS[campaign_id] = items
     return items
 
@@ -376,24 +467,133 @@ def generate_campaign_translations(campaign_id: str) -> list[Translation]:
     if not camp.event:
         raise HTTPException(400, "Cannot generate translations without event details")
     langs = camp.languages or [Language.en, Language.hi, Language.ml, Language.ta]
-    items = translation_engine.generate_translations(campaign_id, camp.event, langs)
+    ev_ver = getattr(camp, "_event_version", 1)
+    items = translation_engine.generate_translations(campaign_id, camp.event, langs, event_version=ev_ver)
     db.TRANSLATIONS[campaign_id] = items
     return items
 
 
 @app.put("/campaigns/{campaign_id}/translations/{language}", response_model=Translation, tags=["Translations"])
 def save_translation(campaign_id: str, language: Language, body: Translation) -> Translation:
-    _campaign(campaign_id)
+    camp = _campaign(campaign_id)
     items = db.TRANSLATIONS.setdefault(campaign_id, [])
+    
+    # If edited by hand, set status="edited" unless explicitly approved
+    t_dict = body.model_dump()
+    if body.approved:
+        t_dict["status"] = "approved"
+    else:
+        t_dict["status"] = "edited"
+
+    saved_translation = Translation(**t_dict)
+    found = False
     for i, t in enumerate(items):
         if t.language == language:
-            items[i] = body
-            return body
-    items.append(body)
-    return body
+            items[i] = saved_translation
+            found = True
+            break
+    if not found:
+        items.append(saved_translation)
+
+    # Check if all required languages for this campaign are approved
+    req_langs = set(camp.languages) if camp.languages else {Language.en}
+    approved_langs = {t.language for t in items if t.approved}
+    if req_langs.issubset(approved_langs):
+        camp.status = CampaignStatus.translations_approved
+
+    return saved_translation
 
 
-# ---------- launch, test call, dispatch (B1 replaces the logic) ----------
+# ---------- outreach content & test send ----------
+
+@app.post("/campaigns/{campaign_id}/content/generate", response_model=list[OutreachItem], tags=["Content"])
+def generate_content(campaign_id: str) -> list[OutreachItem]:
+    camp = _campaign(campaign_id)
+    if not camp.event:
+        raise HTTPException(400, "Cannot generate content without an approved event record")
+    langs = camp.languages or [Language.en]
+    chans = camp.channels or [Channel.call, Channel.sms, Channel.email, Channel.whatsapp]
+    ev_ver = getattr(camp, "_event_version", 1)
+    
+    items = outreach.generate_campaign_content(
+        campaign_id=campaign_id,
+        template_key=camp.template_key,
+        event=camp.event,
+        languages=langs,
+        channels=chans,
+        poster_url=camp.poster_url,
+        event_version=ev_ver,
+    )
+    return items
+
+
+@app.get("/campaigns/{campaign_id}/content", response_model=list[OutreachItem], tags=["Content"])
+def list_content(campaign_id: str) -> list[OutreachItem]:
+    _campaign(campaign_id)
+    return outreach.list_campaign_content(campaign_id)
+
+
+@app.get("/campaigns/{campaign_id}/content/{item_id}", response_model=OutreachItem, tags=["Content"])
+def get_content_item(campaign_id: str, item_id: str) -> OutreachItem:
+    _campaign(campaign_id)
+    items = outreach.list_campaign_content(campaign_id)
+    for item in items:
+        if item.id == item_id:
+            return item
+    raise HTTPException(404, "Content item not found")
+
+
+@app.put("/campaigns/{campaign_id}/content/{item_id}", response_model=OutreachItem, tags=["Content"])
+def save_content_item(campaign_id: str, item_id: str, body: OutreachItem) -> OutreachItem:
+    camp = _campaign(campaign_id)
+    t_dict = body.model_dump()
+    if body.approved:
+        t_dict["status"] = "approved"
+    else:
+        t_dict["status"] = "edited"
+
+    saved = OutreachItem(**t_dict)
+    updated = outreach.update_content_item(campaign_id, item_id, saved)
+    
+    # Check if all items for campaign are approved
+    all_items = outreach.list_campaign_content(campaign_id)
+    if all_items and all(it.approved for it in all_items):
+        camp.status = CampaignStatus.content_ready
+
+    return updated
+
+
+@app.post("/campaigns/{campaign_id}/test-send", tags=["Content"])
+def test_send(
+    campaign_id: str,
+    body: TestSendRequest,
+    me: Me = Depends(auth.current_organizer),
+) -> dict:
+    """Dispatches a test send for non-call channels to organizer's target address/number."""
+    camp = _campaign(campaign_id)
+    res = outreach.send_test_message(
+        channel=body.channel,
+        target=body.target,
+        subject=f"Test Send: {camp.name}",
+        body=f"Test notification for {camp.name}. Venue: {camp.event.venue if camp.event else 'Main Hall'}",
+        poster_url=camp.poster_url,
+    )
+    return res
+
+
+# ---------- launch, test call, dispatch ----------
+
+@app.post("/campaigns/{campaign_id}/preflight", response_model=PreflightResult, tags=["Launch"])
+def preflight_check(
+    campaign_id: str,
+    me: Me = Depends(auth.current_organizer),
+    conn: Optional[psycopg.Connection] = Depends(database.get_conn),
+) -> PreflightResult:
+    camp = campaigns_db.get_for(conn, me, campaign_id) if conn is not None and campaign_id not in db.CAMPAIGNS else _campaign(campaign_id)
+    translations = db.TRANSLATIONS.get(campaign_id, [])
+    contact_count = camp.contact_count if hasattr(camp, "contact_count") else len(_contacts(campaign_id))
+    return preflight.run_preflight_checks(camp, translations, contact_count)
+
 
 @app.post("/campaigns/{campaign_id}/test-call", response_model=TestCallResult, tags=["Dispatch (B1)"])
 def test_call(campaign_id: str, body: TestCallRequest) -> TestCallResult:
@@ -407,11 +607,20 @@ def launch(
     me: Me = Depends(auth.current_organizer),
     conn: Optional[psycopg.Connection] = Depends(database.get_conn),
 ) -> LaunchResult:
+    camp = campaigns_db.get_for(conn, me, campaign_id) if conn is not None and campaign_id not in db.CAMPAIGNS else _campaign(campaign_id)
+    translations = db.TRANSLATIONS.get(campaign_id, [])
+    contact_count = camp.contact_count if hasattr(camp, "contact_count") else len(_contacts(campaign_id))
+    
+    # Preflight launch gate check
+    pf = preflight.run_preflight_checks(camp, translations, contact_count)
+    if not pf.can_launch and os.getenv("BYPASS_PREFLIGHT", "false").lower() not in ("true", "1"):
+        raise HTTPException(400, f"Launch blocked by preflight checks: {', '.join(pf.blockers)}")
+
     if conn is not None and campaign_id not in db.CAMPAIGNS:
-        camp = campaigns_db.launch_for(conn, me, campaign_id)
-        return LaunchResult(status=camp.status, queued_contacts=camp.contact_count)
-    camp = _campaign(campaign_id)
-    camp.status = CampaignStatus.running
+        c_res = campaigns_db.launch_for(conn, me, campaign_id)
+        return LaunchResult(status=c_res.status, queued_contacts=c_res.contact_count)
+    
+    camp.status = CampaignStatus.launched
     queued = sum(not c.opted_out for c in _contacts(campaign_id))
     return LaunchResult(status=camp.status, queued_contacts=queued)
 
@@ -435,7 +644,12 @@ def retry(campaign_id: str, body: RetryRequest) -> RetryResult:
 # ---------- analytics (B1 replaces the logic) ----------
 
 @app.get("/campaigns/{campaign_id}/analytics/funnel", response_model=Funnel, tags=["Analytics (B1)"])
-def funnel(campaign_id: str) -> Funnel:
+def funnel(
+    campaign_id: str,
+    conn: Optional[psycopg.Connection] = Depends(database.get_conn),
+) -> Funnel:
+    if conn is not None:
+        return registration_db.get_funnel_db(conn, campaign_id)
     items = _contacts(campaign_id)
     return Funnel(
         contacts=len(items),
@@ -449,104 +663,98 @@ def funnel(campaign_id: str) -> Funnel:
 
 
 @app.get("/campaigns/{campaign_id}/analytics/by-language", response_model=list[BreakdownRow], tags=["Analytics (B1)"])
-def by_language(campaign_id: str) -> list[BreakdownRow]:
+def by_language(
+    campaign_id: str,
+    conn: Optional[psycopg.Connection] = Depends(database.get_conn),
+) -> list[BreakdownRow]:
+    if conn is not None:
+        return registration_db.get_by_language_db(conn, campaign_id)
     return _group(_contacts(campaign_id), lambda c: c.language.value)
 
 
 @app.get("/campaigns/{campaign_id}/analytics/by-segment", response_model=list[BreakdownRow], tags=["Analytics (B1)"])
-def by_segment(campaign_id: str) -> list[BreakdownRow]:
+def by_segment(
+    campaign_id: str,
+    conn: Optional[psycopg.Connection] = Depends(database.get_conn),
+) -> list[BreakdownRow]:
+    if conn is not None:
+        return registration_db.get_by_segment_db(conn, campaign_id)
     return _group(_contacts(campaign_id), lambda c: c.segment)
 
 
 # ---------- public registration (reached from a personal link) ----------
 
 @app.get("/r/{token}", response_model=RegistrationPage, tags=["Registration (public)"])
-def registration_page(token: str) -> RegistrationPage:
-    camp, contact = _by_token(token)
-    if not camp.event:
-        raise HTTPException(404, "This event is not published yet")
-
-    now = datetime.now(timezone.utc)
-    expired = bool(camp.event.rsvp_deadline and now > camp.event.rsvp_deadline)
-    reg_count = sum(c.stage in (Stage.registered, Stage.paid, Stage.attended) for c in _contacts(camp.id))
-    event_full = bool(camp.event.capacity and reg_count >= camp.event.capacity)
-
-    return RegistrationPage(
-        first_name=contact.name.split()[0],
-        language=contact.language,
-        event=camp.event,
-        poster_url=camp.poster_url,
-        fee_inr=camp.event.fee_inr,
-        stage=contact.stage,
-        already_registered=contact.stage in (Stage.registered, Stage.paid, Stage.attended),
-        event_full=event_full,
-        expired=expired,
-    )
+def registration_page(
+    token: str,
+    request: Request,
+    conn: Optional[psycopg.Connection] = Depends(database.get_conn),
+) -> RegistrationPage:
+    client_ip = request.client.host if request and request.client else ""
+    registration_db.check_rate_limit(client_ip)
+    return registration_db.get_public_registration_page(conn, token)
 
 
 @app.post("/r/{token}/register", response_model=RegisterResult, tags=["Registration (public)"])
-def register(token: str, body: RegisterRequest) -> RegisterResult:
-    camp, contact = _by_token(token)
-    if not body.consent:
-        raise HTTPException(400, "Consent is required to register")
-
-    now = datetime.now(timezone.utc)
-    if camp.event and camp.event.rsvp_deadline and now > camp.event.rsvp_deadline:
-        raise HTTPException(400, "Registration for this event has closed")
-
-    if camp.event and camp.event.capacity:
-        reg_count = sum(c.stage in (Stage.registered, Stage.paid, Stage.attended) for c in _contacts(camp.id))
-        if reg_count >= camp.event.capacity and contact.stage not in (Stage.registered, Stage.paid, Stage.attended):
-            raise HTTPException(409, "This event is at full capacity")
-
-    if contact.stage not in (Stage.paid, Stage.attended):
-        contact.stage = Stage.registered
-    fee = camp.event.fee_inr if camp.event else 0
-    return RegisterResult(
-        stage=contact.stage, amount_inr=fee,
-        requires_payment=fee > 0 and contact.stage not in (Stage.paid, Stage.attended),
-    )
+def register(
+    token: str,
+    body: RegisterRequest,
+    request: Request,
+    conn: Optional[psycopg.Connection] = Depends(database.get_conn),
+) -> RegisterResult:
+    client_ip = request.client.host if request and request.client else ""
+    registration_db.check_rate_limit(client_ip)
+    return registration_db.register_public_attendee(conn, token, body)
 
 
 @app.get("/r/{token}/calendar.ics", tags=["Registration (public)"])
 def download_calendar_invite(token: str) -> Response:
     """Download standard .ics iCalendar file for the event."""
-    camp, contact = _by_token(token)
-    if not camp.event:
-        raise HTTPException(404, "Event details not found")
-    ics_body = calendar_invite.generate_ics(camp.event, contact.name)
-    filename = f"{camp.name.replace(' ', '_').lower()}.ics"
-    return Response(
-        content=ics_body,
-        media_type="text/calendar",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
-    )
+    try:
+        camp, contact = _by_token(token)
+        if not camp.event:
+            raise registration_db._not_found_token()
+        ics_body = calendar_invite.generate_ics(camp.event, contact.name)
+        filename = f"{camp.name.replace(' ', '_').lower()}.ics"
+        return Response(
+            content=ics_body,
+            media_type="text/calendar",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+    except Exception:
+        raise registration_db._not_found_token()
 
 
 @app.get("/r/{token}/ticket.svg", tags=["Registration (public)"])
 def get_ticket_svg(token: str) -> Response:
     """Renders visual SVG admission pass with QR representation."""
-    camp, contact = _by_token(token)
-    svg_body = qr_checkin.generate_ticket_svg(token, contact.name, camp.name)
-    return Response(content=svg_body, media_type="image/svg+xml")
+    try:
+        camp, contact = _by_token(token)
+        svg_body = qr_checkin.generate_ticket_svg(token, contact.name, camp.name)
+        return Response(content=svg_body, media_type="image/svg+xml")
+    except Exception:
+        raise registration_db._not_found_token()
 
 
 @app.post("/r/{token}/check-in", tags=["Registration (public)"])
 def check_in_attendee(token: str) -> dict:
     """Staff QR scan check-in endpoint: marks person as Attended."""
-    _, contact = _by_token(token)
-    return qr_checkin.process_checkin(contact)
+    try:
+        _, contact = _by_token(token)
+        return qr_checkin.process_checkin(contact)
+    except Exception:
+        raise registration_db._not_found_token()
 
 
 @app.post("/r/{token}/pay", response_model=PaymentOrder, tags=["Registration (public)"])
-def create_payment(token: str) -> PaymentOrder:
-    camp, contact = _by_token(token)
-    fee = camp.event.fee_inr if camp.event else 0
-    if fee <= 0:
-        raise HTTPException(400, "This event has no fee")
-    if contact.stage in (Stage.paid, Stage.attended):
-        raise HTTPException(409, "Already paid")
-    return payments.create_order(contact.id, fee, camp.id)
+def create_payment(
+    token: str,
+    request: Request,
+    conn: Optional[psycopg.Connection] = Depends(database.get_conn),
+) -> PaymentOrder:
+    client_ip = request.client.host if request and request.client else ""
+    registration_db.check_rate_limit(client_ip)
+    return registration_db.create_public_payment_order(conn, token)
 
 
 @app.post("/webhooks/payment", tags=["Registration (public)"])
@@ -554,34 +762,16 @@ async def payment_webhook(
     body: PaymentWebhook,
     request: Request,
     x_razorpay_signature: Optional[str] = Header(None),
+    conn: Optional[psycopg.Connection] = Depends(database.get_conn),
 ) -> dict:
     """Gateway callback. Verifies gateway signature when header is present and safely idempotently marks order paid."""
-    if x_razorpay_signature:
-        raw_body = await request.body()
-        if not payments.verify_webhook_signature(raw_body, x_razorpay_signature):
-            raise HTTPException(400, "Invalid webhook signature")
-
-    contact_id = body.order_id.removeprefix("order_mock_")
-    matched_contact = None
-    order_rec = payments.get_order(body.order_id) or {}
-    for _, c in db.TOKENS.values():
-        if c.id == contact_id or c.id == order_rec.get("contact_id"):
-            matched_contact = c
-            break
-
-    if not matched_contact and not payments.get_order(body.order_id):
-        raise HTTPException(404, "Order not found")
-
-    result = payments.process_payment_webhook(body.order_id, body.status)
-    if matched_contact and body.status.lower() in ("paid", "captured", "success"):
-        matched_contact.stage = Stage.paid
-        if matched_contact.email:
-            channels.send_email(
-                to_email=matched_contact.email,
-                subject="Payment Receipt: Registration Confirmed",
-                body=f"Dear {matched_contact.name},\n\nYour payment for order {body.order_id} has been received. Your registration is confirmed!",
-            )
-    return result
+    raw_body = await request.body()
+    return registration_db.process_gateway_webhook(
+        conn=conn,
+        raw_body=raw_body,
+        signature_header=x_razorpay_signature,
+        body_dict=body.model_dump(),
+    )
 
 
 # ---------- short links ----------
@@ -593,3 +783,5 @@ def short_link_redirect(code: str) -> RedirectResponse:
         raise HTTPException(404, "Short link not found or expired")
     return RedirectResponse(url=target, status_code=307)
 
+app.include_router(email_routes.router)
+app.include_router(feedback_routes.router)

@@ -397,13 +397,49 @@
         }
       }
     },
+    "/settings/ai": {
+      "get": {
+        "tags": [
+          "Settings"
+        ],
+        "summary": "Get Ai Settings",
+        "operationId": "get_ai_settings_settings_ai_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Settings"
+        ],
+        "summary": "Set Ai Settings",
+        "operationId": "set_ai_settings_settings_ai_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
     "/campaigns/{campaign_id}/voice-note": {
       "post": {
         "tags": [
           "Campaigns"
         ],
         "summary": "Upload Voice Note",
-        "description": "The audio is stored privately for real (WAV, MP3, M4A, OGG, WebM or FLAC, up to 25 MB).\n\nThe draft is still mock: transcription and extraction come in the voice note pipeline task.",
+        "description": "The audio is stored privately for real (WAV, MP3, M4A, OGG, WebM or FLAC, up to 25 MB).\n\nThe draft is transcribed and extracted with the AI voice pipeline.",
         "operationId": "upload_voice_note_campaigns__campaign_id__voice_note_post",
         "security": [
           {
@@ -418,6 +454,38 @@
             "schema": {
               "type": "string",
               "title": "Campaign Id"
+            }
+          },
+          {
+            "name": "x-ai-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Ai-Key"
+            }
+          },
+          {
+            "name": "x-ai-provider",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Ai-Provider"
             }
           }
         ],
@@ -481,8 +549,13 @@
           "Audience"
         ],
         "summary": "Import Audience",
-        "description": "Real import. Validates every row, skips bad ones, and adds the rest to the campaign.\n\nUploading again adds only people who are not in the campaign yet.\nNumbers that opted out in any campaign are skipped.",
+        "description": "Real import. Validates every row, skips bad ones, and adds the rest to the campaign.\n\nUploading again adds only people who are not in the campaign yet.\nNumbers that opted out in any campaign are skipped.\nPhone numbers are stored encrypted (phone_enc) and hashed (phone_hash); full numbers never leave this function.",
         "operationId": "import_audience_campaigns__campaign_id__audience_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "parameters": [
           {
             "name": "campaign_id",
@@ -545,7 +618,13 @@
           "Audience"
         ],
         "summary": "List Contacts",
+        "description": "List contacts for a campaign. Requires login when the database is on.",
         "operationId": "list_contacts_campaigns__campaign_id__contacts_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "parameters": [
           {
             "name": "campaign_id",
@@ -694,6 +773,52 @@
                 "schema": {
                   "$ref": "#/components/schemas/Contact"
                 }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/campaigns/{campaign_id}/languages": {
+      "get": {
+        "tags": [
+          "Translations"
+        ],
+        "summary": "List Campaign Languages",
+        "description": "Returns languages found in audience with counts.",
+        "operationId": "list_campaign_languages_campaigns__campaign_id__languages_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "campaign_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Campaign Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
               }
             }
           },
@@ -862,6 +987,315 @@
         }
       }
     },
+    "/campaigns/{campaign_id}/content/generate": {
+      "post": {
+        "tags": [
+          "Content"
+        ],
+        "summary": "Generate Content",
+        "operationId": "generate_content_campaigns__campaign_id__content_generate_post",
+        "parameters": [
+          {
+            "name": "campaign_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Campaign Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/OutreachItem"
+                  },
+                  "title": "Response Generate Content Campaigns  Campaign Id  Content Generate Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/campaigns/{campaign_id}/content": {
+      "get": {
+        "tags": [
+          "Content"
+        ],
+        "summary": "List Content",
+        "operationId": "list_content_campaigns__campaign_id__content_get",
+        "parameters": [
+          {
+            "name": "campaign_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Campaign Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/OutreachItem"
+                  },
+                  "title": "Response List Content Campaigns  Campaign Id  Content Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/campaigns/{campaign_id}/content/{item_id}": {
+      "get": {
+        "tags": [
+          "Content"
+        ],
+        "summary": "Get Content Item",
+        "operationId": "get_content_item_campaigns__campaign_id__content__item_id__get",
+        "parameters": [
+          {
+            "name": "campaign_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Campaign Id"
+            }
+          },
+          {
+            "name": "item_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Item Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OutreachItem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Content"
+        ],
+        "summary": "Save Content Item",
+        "operationId": "save_content_item_campaigns__campaign_id__content__item_id__put",
+        "parameters": [
+          {
+            "name": "campaign_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Campaign Id"
+            }
+          },
+          {
+            "name": "item_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Item Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OutreachItem"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OutreachItem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/campaigns/{campaign_id}/test-send": {
+      "post": {
+        "tags": [
+          "Content"
+        ],
+        "summary": "Test Send",
+        "description": "Dispatches a test send for non-call channels to organizer's target address/number.",
+        "operationId": "test_send_campaigns__campaign_id__test_send_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "campaign_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Campaign Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TestSendRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Test Send Campaigns  Campaign Id  Test Send Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/campaigns/{campaign_id}/preflight": {
+      "post": {
+        "tags": [
+          "Launch"
+        ],
+        "summary": "Preflight Check",
+        "operationId": "preflight_check_campaigns__campaign_id__preflight_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "campaign_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Campaign Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PreflightResult"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/campaigns/{campaign_id}/test-call": {
       "post": {
         "tags": [
@@ -921,6 +1355,11 @@
         ],
         "summary": "Launch",
         "operationId": "launch_campaigns__campaign_id__launch_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "parameters": [
           {
             "name": "campaign_id",
@@ -1678,6 +2117,13 @@
         "type": "string",
         "enum": [
           "draft",
+          "details_approved",
+          "audience_ready",
+          "translations_approved",
+          "content_ready",
+          "tested",
+          "launched",
+          "needs_regeneration",
           "ready",
           "running",
           "completed"
@@ -1884,6 +2330,58 @@
             "type": "array",
             "title": "Needs Review",
             "description": "Field names the model was unsure about"
+          },
+          "evidence": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evidence",
+            "description": "Per-field evidence quotes and source"
+          },
+          "conflicts": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Conflicts",
+            "description": "Voice vs poster conflicting field values"
+          },
+          "title_candidates": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Title Candidates",
+            "description": "Top title candidates"
+          },
+          "poster_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Poster Text",
+            "description": "Raw text read from poster image"
+          },
+          "prompt_version": {
+            "type": "string",
+            "title": "Prompt Version",
+            "description": "Prompt template version used for extraction",
+            "default": "v1"
           }
         },
         "type": "object",
@@ -2164,6 +2662,119 @@
         ],
         "title": "Outcome"
       },
+      "OutreachItem": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "campaign_id": {
+            "type": "string",
+            "title": "Campaign Id"
+          },
+          "channel": {
+            "$ref": "#/components/schemas/Channel"
+          },
+          "language": {
+            "$ref": "#/components/schemas/Language"
+          },
+          "segment": {
+            "type": "string",
+            "title": "Segment",
+            "default": "General"
+          },
+          "subject": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subject"
+          },
+          "body": {
+            "type": "string",
+            "title": "Body"
+          },
+          "whatsapp_template_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Whatsapp Template Name"
+          },
+          "hashtags": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Hashtags"
+          },
+          "media_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Media Url"
+          },
+          "event_version": {
+            "type": "integer",
+            "title": "Event Version",
+            "default": 1
+          },
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "default": "draft"
+          },
+          "approved": {
+            "type": "boolean",
+            "title": "Approved",
+            "default": false
+          },
+          "fact_check": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fact Check"
+          },
+          "segment_count": {
+            "type": "integer",
+            "title": "Segment Count",
+            "default": 1
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "campaign_id",
+          "channel",
+          "language",
+          "body"
+        ],
+        "title": "OutreachItem"
+      },
       "PaymentOrder": {
         "properties": {
           "order_id": {
@@ -2230,6 +2841,33 @@
           "poster_url"
         ],
         "title": "PosterResult"
+      },
+      "PreflightResult": {
+        "properties": {
+          "can_launch": {
+            "type": "boolean",
+            "title": "Can Launch"
+          },
+          "blockers": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Blockers"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Warnings"
+          }
+        },
+        "type": "object",
+        "required": [
+          "can_launch"
+        ],
+        "title": "PreflightResult"
       },
       "RegisterRequest": {
         "properties": {
@@ -2527,6 +3165,28 @@
         ],
         "title": "TestCallResult"
       },
+      "TestSendRequest": {
+        "properties": {
+          "channel": {
+            "$ref": "#/components/schemas/Channel"
+          },
+          "language": {
+            "$ref": "#/components/schemas/Language",
+            "default": "en"
+          },
+          "target": {
+            "type": "string",
+            "title": "Target",
+            "description": "Email address or phone number for test send"
+          }
+        },
+        "type": "object",
+        "required": [
+          "channel",
+          "target"
+        ],
+        "title": "TestSendRequest"
+      },
       "Token": {
         "properties": {
           "access_token": {
@@ -2613,6 +3273,51 @@
             "type": "boolean",
             "title": "Approved",
             "default": false
+          },
+          "event_version": {
+            "type": "integer",
+            "title": "Event Version",
+            "description": "Event version this translation was generated from",
+            "default": 1
+          },
+          "event_content_hash": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Event Content Hash",
+            "description": "Event content hash"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "description": "Status: generated, edited, approved, stale",
+            "default": "generated"
+          },
+          "fact_check": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fact Check",
+            "description": "Automatic fact check results"
+          },
+          "placeholder_errors": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Placeholder Errors",
+            "description": "Missing or altered placeholders"
           }
         },
         "type": "object",

@@ -16,7 +16,7 @@ def client():
 def test_invalid_registration_token_returns_404(client):
     r = client.get("/r/tok_does_not_exist_9999")
     assert r.status_code == 404
-    assert "not valid" in r.json()["detail"].lower()
+    assert "not found" in r.json()["detail"].lower()
 
 
 def test_registration_without_consent_fails(client):
@@ -64,6 +64,6 @@ def test_event_capacity_limit(client):
             json={"name": "Sneha Das", "consent": True, "party_size": 1},
         )
         assert r_reg.status_code == 409
-        assert "capacity" in r_reg.json()["detail"].lower()
+        assert "full" in r_reg.json()["detail"].lower()
     finally:
         camp.event.capacity = old_cap

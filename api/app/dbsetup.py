@@ -36,8 +36,23 @@ def setup(url: str, reset: bool = False, allow_remote_reset: bool = False) -> st
             exists = False
         if not exists:
             conn.execute(SCHEMA_FILE.read_text(encoding="utf-8"))
+        else:
+            _migrate_schema(conn)
         seed_templates(conn)
     return "already existed" if exists else "created"
+
+
+def _migrate_schema(conn: psycopg.Connection) -> None:
+    """Ensure optional/new columns exist on existing tables."""
+    conn.execute("ALTER TABLE campaign_contacts ADD COLUMN IF NOT EXISTS token_hash text")
+    conn.execute("ALTER TABLE campaign_contacts ADD COLUMN IF NOT EXISTS token_expires_at timestamptz")
+    conn.execute("ALTER TABLE campaign_contacts ADD COLUMN IF NOT EXISTS token_used_at timestamptz")
+    conn.execute("ALTER TABLE payments ADD COLUMN IF NOT EXISTS currency text NOT NULL DEFAULT 'INR'")
+    conn.execute("ALTER TABLE payments ADD COLUMN IF NOT EXISTS gateway_key_id text")
+    conn.execute("ALTER TABLE payments ADD COLUMN IF NOT EXISTS gateway_payment_id text")
+    conn.execute("ALTER TABLE payments ADD COLUMN IF NOT EXISTS gateway_event_id text")
+    conn.execute("ALTER TABLE payments ADD COLUMN IF NOT EXISTS hold_expires_at timestamptz")
+    conn.execute("ALTER TABLE payments ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now()")
 
 
 def seed_templates(conn: psycopg.Connection) -> None:
