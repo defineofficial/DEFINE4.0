@@ -1,0 +1,310 @@
+﻿=== files
+src\analyzer.js  8256
+src\api.js  10693
+src\App.css  2891
+src\App.jsx  3646
+src\index.css  2169
+src\KoodalApp.jsx  141053
+src\LiveGuest.jsx  11778
+src\main.jsx  417
+src\assets\hero.png  13057
+src\assets\react.svg  4126
+src\assets\vite.svg  8709
+=== main.jsx
+import { StrictMode } from "react";
+import { createRoot } from "react-dom/client";
+import KoodalApp from "./KoodalApp.jsx";
+import LiveGuest from './LiveGuest.jsx'
+const isGuest = window.location.pathname.startsWith('/r/')
+   // in the render call: {isGuest ? <LiveGuest /> : <App />}
+createRoot(document.getElementById("root")).render(
+  <StrictMode>
+    {isGuest ? <LiveGuest /> : <KoodalApp />}
+  </StrictMode>
+);
+=== api.js
+/**
+ * EventReach API Client
+ * Connects React Frontend to FastAPI backend at http://127.0.0.1:8000
+ * Gracefully falls back to mock responses if backend is offline.
+ */
+
+const API_BASE = ""; // Uses Vite reverse-proxy (/auth, /campaigns, /r, etc.)
+
+let token = localStorage.getItem("eventreach_token") || null;
+
+export function setAuthToken(newToken) {
+  token = newToken;
+  if (newToken) {
+    localStorage.setItem("eventreach_token", newToken);
+  } else {
+    localStorage.removeItem("eventreach_token");
+  }
+}
+
+export async function ensureAuth() {
+  if (!token) {
+    try {
+      const res = await fetch(`${API_BASE}/auth/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: "organizer@example.com", password: "password123" }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.access_token) {
+          setAuthToken(data.access_token);
+        }
+      }
+    } catch {
+      // offline / mock mode fallback
+    }
+  }
+  return token;
+}
+
+async function request(endpoint, options = {}) {
+  await ensureAuth();
+  const headers = {
+    "Content-Type": "application/json",
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    ...options.headers,
+  };
+
+  const config = {
+    ...options,
+    headers,
+  };
+
+  const response = await fetch(`${API_BASE}${endpoint}`, config);
+  if (!response.ok) {
+    let errDetail = response.statusText;
+    try {
+      const errJson = await response.json();
+      errDetail = errJson.detail || JSON.stringify(errJson);
+    } catch {
+      // ignore
+    }
+    const err = new Error(errDetail);
+    err.status = response.status;
+    throw err;
+  }
+
+  // Handle SVG, ICS or JSON
+  const contentType = response.headers.get("content-type") || "";
+  if (contentType.includes("application/json")) {
+    return await response.json();
+  }
+  return await response.text();
+}
+
+export const api = {
+  // Health
+  checkHealth: async () => {
+    try {
+      const res = await fetch(`${API_BASE}/health`, { signal: AbortSignal.timeout(2000) });
+      if (res.ok) return await res.json();
+      return null;
+    } catch {
+      return null;
+    }
+  },
+
+  // Auth
+  login: async (email, password) => {
+    try {
+      const data = await request("/auth/login", {
+        method: "POST",
+        body: JSON.stringify({ email, password }),
+      });
+      if (data.access_token) {
+        setAuthToken(data.access_token);
+      }
+      return data;
+    } catch (err) {
+      console.warn("Backend auth failed, using mock auth:", err.message);
+      return { access_token: "mock-token" };
+    }
+  },
+
+  getMe: async () => {
+    try {
+      return await request("/me");
+    } catch {
+      return { id: "org_001", name: "Asha Thomas", email: "organizer@example.com", role: "organizer" };
+    }
+  },
+
+  // Templates
+  getTemplates: async () => {
+    try {
+      return await request("/templates");
+    } catch {
+      return null;
+    }
+  },
+
+  // Campaigns
+  getCampaigns: async () => {
+    try {
+      return await request("/campaigns");
+    } catch {
+      return null;
+    }
+  },
+
+  createCampaign: async (name, template_key) => {
+    try {
+      return await request("/campaigns", {
+        method: "POST",
+        body: JSON.stringify({ name, template_key }),
+      });
+    } catch (err) {
+      console.warn("Backend createCampaign failed:", err.message);
+      return null;
+    }
+  },
+
+  // Analytics & Contacts
+  getFunnel: async (campaignId) => {
+    try {
+      return await request(`/campaigns/${campaignId}/analytics/funnel`);
+    } catch {
+      return null;
+    }
+  },
+
+  getContacts: async (campaignId) => {
+    try {
+      return await request(`/campaigns/${campaignId}/contacts`);
+    } catch {
+      return null;
+    }
+  },
+
+  // Translations
+  getTranslations: async (campaignId) => {
+    try {
+      return await request(`/campaigns/${campaignId}/translations`);
+    } catch {
+      return null;
+    }
+  },
+
+  // Dispatch & Retries
+  testCall: async (campaignId, phone, language = "ml") => {
+    try {
+      return await request(`/campaigns/${campaignId}/test-call`, {
+        method: "POST",
+        body: JSON.stringify({ phone, language }),
+      });
+    } catch {
+      return { status: "queued", message: "Mock test call simulated." };
+    }
+  },
+
+  retryOutreach: async (campaignId, target = "non_responders") => {
+    try {
+      return await request(`/campaigns/${campaignId}/retry`, {
+        method: "POST",
+        body: JSON.stringify({ target }),
+      });
+    } catch {
+      return { queued: 412, skipped_opted_out: 14, skipped_max_attempts: 28 };
+    }
+  },
+
+  // File Uploads
+  uploadPoster: async (campaignId, file) => {
+    try {
+      await ensureAuth();
+      const formData = new FormData();
+      formData.append("file", file);
+      const headers = token ? { Authorization: `Bearer ${token}` } : {};
+      const res = await fetch(`${API_BASE}/campaigns/${campaignId}/poster`, {
+        method: "POST",
+        headers,
+        body: formData,
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || "Poster upload failed");
+      }
+      return await res.json();
+    } catch (err) {
+      console.warn("Poster upload warning:", err.message);
+      return { poster_url: URL.createObjectURL(file) };
+    }
+  },
+
+  uploadVoiceNote: async (campaignId, file) => {
+    try {
+      await ensureAuth();
+      const formData = new FormData();
+      formData.append("file", file);
+      const customKey = localStorage.getItem("eventreach_ai_key") || "";
+      const customProvider = localStorage.getItem("eventreach_ai_provider") || "";
+      const headers = {
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...(customKey ? { "X-AI-Key": customKey } : {}),
+        ...(customProvider ? { "X-AI-Provider": customProvider } : {}),
+      };
+      const res = await fetch(`${API_BASE}/campaigns/${campaignId}/voice-note`, {
+        method: "POST",
+        headers,
+        body: formData,
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || "Voice note extraction failed");
+      }
+      return await res.json();
+    } catch (err) {
+      console.warn("Voice extraction warning:", err.message);
+      return {
+        transcript: "Join us for the Define Healthcare & AI Seminar on October 23, 2026 at Grand Hall, Kochi. Registration fee is 500 rupees.",
+        detected_language: "en",
+        event: {
+          title: "Define Healthcare & AI Seminar",
+          venue: "Grand Hall, Block A",
+          city: "Kochi",
+          fee_inr: 500,
+          starts_at: "2026-10-23T10:00:00+05:30",
+        },
+        needs_review: [],
+      };
+=== matches
+api.js:131: createCampaign: async (name, template_key) => {
+api.js:138: console.warn("Backend createCampaign failed:", err.message);
+KoodalApp.jsx:309: function Home({ onLogin, backendStatus, onOpenAISettings }) {
+KoodalApp.jsx:344: className={`pill ${backendStatus === "connected" ? "g" : "w"}`}
+KoodalApp.jsx:346: title={backendStatus === "connected" ? "FastAPI backend running at http://localhost:8000" : "Running in standalone mock mode"}
+KoodalApp.jsx:348: {backendStatus === "connected" ? "● Backend Live :8000" : "○ Standalone Demo"}
+KoodalApp.jsx:631: const [campaignId, setCampaignId] = useState(null);
+KoodalApp.jsx:649: const created = await api.createCampaign(eventData.title || "New Campaign", templateKeys[tpl]);
+KoodalApp.jsx:652: setCampaignId(cid);
+KoodalApp.jsx:749: const res = await api.uploadVoiceNote(campaignId || "cmp_001", file);
+KoodalApp.jsx:808: const res = await api.uploadVoiceNote(campaignId || "cmp_001", file);
+KoodalApp.jsx:1029: const res = await api.uploadPoster(campaignId || "cmp_001", file);
+KoodalApp.jsx:1261: const res = await api.uploadVoiceNote(campaignId || "cmp_001", file);
+KoodalApp.jsx:1626: const report = await api.importAudience(campaignId || "cmp_001", file);
+KoodalApp.jsx:1629: const contactsRes = await api.getContacts(campaignId || "cmp_001");
+KoodalApp.jsx:1802: const res = await api.testCall(campaignId || "cmp_001", testPhone, langCode);
+KoodalApp.jsx:1871: const created = await api.createCampaign(eventData.title || "New Campaign", templateKeys[tpl]);
+KoodalApp.jsx:1874: setCampaignId(cid);
+KoodalApp.jsx:1890: const created = await api.createCampaign(eventData.title || "DEFINE 2026", templateKeys[tpl]);
+KoodalApp.jsx:1910: id: campaignId || `cmp_${Date.now()}`,
+KoodalApp.jsx:1973: api.getContacts("cmp_001").then((res) => {
+KoodalApp.jsx:1980: id: "cmp_demo_1",
+KoodalApp.jsx:1995: id: "cmp_demo_2",
+KoodalApp.jsx:2010: id: "cmp_demo_3",
+KoodalApp.jsx:2034: const currentCamp = combinedList.find((c) => c.id === activeCampaignId || c.name === activeCampaignId) || combinedList[0] || fallbackCampaigns[0];
+KoodalApp.jsx:2295: const report = await api.importAudience(campaignId || "cmp_001", file);
+KoodalApp.jsx:2297: const fresh = await api.getContacts(campaignId || "cmp_001");
+KoodalApp.jsx:2508: const [backendStatus, setBackendStatus] = useState("checking");
+KoodalApp.jsx:2529: setBackendStatus(res ? "connected" : "offline");
+KoodalApp.jsx:2534: setBackendStatus(res ? "connected" : "offline");
+KoodalApp.jsx:2559: className={`pill ${backendStatus === "connected" ? "g" : "w"}`}
+KoodalApp.jsx:2561: title={backendStatus === "connected" ? "Connected to FastAPI at http://localhost:8000" : "FastAPI server offline; running in mock mode"}
+KoodalApp.jsx:2563: {backendStatus === "connected" ? "● Backend Live :8000" : "○ Demo Mode"}
+KoodalApp.jsx:2603: backendStatus={backendStatus}

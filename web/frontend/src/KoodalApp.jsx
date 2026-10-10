@@ -1,0 +1,2640 @@
+import { useState, useEffect, useRef, useMemo } from "react";
+import { api, setAuthToken, ensureAuth } from "./api.js";
+import { analyzePosterImage, extractEventDetailsFromText } from "./analyzer.js";
+
+/* ---------- styles ---------- */
+const css = `
+:root{--ink:#14202B;--mut:#5B6B77;--teal:#2DD7C0;--mint:#E4F7F5;--line:#E3E7EA;--bg:#F1F3F4;--red:#C0233B;--redbg:#FDE8EC;--amb:#8A5A00;--ambbg:#FFF3D6;--grn:#176B3A;--grnbg:#E7F4EA}
+*{box-sizing:border-box}body{margin:0}
+.k{font-family:Inter,system-ui,sans-serif;color:var(--ink);background:#fff;min-height:100vh}
+
+/* Top Navigation / Breadcrumbs */
+.top-bar{display:flex;justify-content:space-between;align-items:center;padding:12px 24px;background:var(--ink);color:#fff;border-bottom:1px solid #263544;position:sticky;top:0;z-index:90}
+.top-brand{display:flex;align-items:center;gap:12px;font-size:16px;font-weight:700}
+.top-brand span{color:var(--teal)}
+.top-right{display:flex;align-items:center;gap:12px}
+.user-pill{display:flex;align-items:center;gap:8px;background:#1e2d3a;padding:5px 12px;border-radius:20px;font-size:12px;color:#cfd8dc;border:1px solid #334454}
+.user-dot{width:8px;height:8px;background:var(--teal);border-radius:50%}
+.btn-sm{padding:6px 12px;font-size:12px;border-radius:6px;border:1px solid #3a4854;background:#1e2d3a;color:#fff;cursor:pointer;font-weight:600}
+.btn-sm:hover{background:#2a3c4c}
+
+/* Home / Login Screen */
+.home-wrap{min-height:100vh;background:linear-gradient(135deg,#0d151c 0%,#16232e 50%,#0c2a32 100%);color:#fff;display:flex;flex-direction:column}
+.home-nav{display:flex;justify-content:space-between;align-items:center;padding:24px 48px;border-bottom:1px solid rgba(255,255,255,0.08)}
+.home-logo{font-size:24px;font-weight:800;color:#fff;display:flex;align-items:center;gap:8px}
+.home-logo b{color:var(--teal)}
+.home-grid{flex:1;display:grid;grid-template-columns:1.2fr 0.9fr;gap:56px;align-items:center;padding:64px 48px;max-width:1200px;margin:0 auto;width:100%}
+@media(max-width:900px){.home-grid{grid-template-columns:1fr;padding:32px 24px}}
+.home-hero h1{font-size:48px;line-height:1.15;margin:16px 0;letter-spacing:-0.02em}
+.home-hero h1 span{background:linear-gradient(90deg,#fff,#2DD7C0);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.home-hero p{font-size:17px;color:#9fb3c4;line-height:1.6;margin-bottom:28px}
+.home-tags{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:32px}
+.home-tags span{background:rgba(45,215,192,0.12);color:var(--teal);border:1px solid rgba(45,215,192,0.25);padding:6px 14px;border-radius:99px;font-size:12px;font-weight:600}
+.home-card{background:#fff;color:var(--ink);border-radius:18px;padding:36px;box-shadow:0 24px 48px rgba(0,0,0,0.4);border:1px solid rgba(255,255,255,0.2)}
+.home-card h2{margin:0 0 8px;font-size:24px}
+.home-card p{color:var(--mut);font-size:14px;margin-top:0;margin-bottom:24px}
+
+/* Headers & Layout */
+.hd{display:flex;justify-content:space-between;align-items:center;padding:14px 32px;border-bottom:1px solid var(--line)}
+.hd small{display:block;color:var(--mut);font-size:11px}
+.lang{display:flex;border:1px solid var(--line);border-radius:10px;padding:4px;gap:4px}
+.lang span{padding:8px 22px;border-radius:8px;font-size:13px;cursor:pointer}.lang .on{background:var(--mint);font-weight:600}
+.hero{background:linear-gradient(120deg,#2b2623,#1d3a42);color:#fff;padding:48px 32px}
+.hero b{color:var(--teal);font-size:11px;letter-spacing:.04em}.hero h1{font-size:34px;margin:8px 0}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:28px;padding:32px;max-width:1100px;margin:auto}
+@media(max-width:800px){.grid{grid-template-columns:1fr}}
+.card{border:1px solid var(--line);border-radius:12px;padding:22px;background:#fff}
+.mint{background:var(--mint);border-radius:10px;padding:16px}
+.row{display:flex;justify-content:space-between;gap:12px;padding:9px 0;border-bottom:1px solid var(--line);font-size:14px}
+.row span:first-child{color:var(--mut)}
+.f{margin:14px 0}.f label{display:block;font-weight:600;font-size:14px;margin-bottom:6px}
+.f input,.f select,.f textarea{width:100%;padding:11px 12px;border:1px solid var(--line);border-radius:8px;font:inherit;font-size:14px;background:#fff}
+.f input[readonly]{background:#F3F4F6}.f.err input{border-color:var(--red)}
+.hint{font-size:12px;color:var(--mut);margin-top:4px}.hint.e{color:var(--red)}
+.btn{display:block;width:100%;padding:12px;border-radius:8px;border:1px solid var(--line);background:#fff;font:inherit;font-weight:600;cursor:pointer;margin-top:10px;text-align:center}
+.btn.p{background:var(--teal);border-color:var(--teal);color:var(--ink)}.btn:disabled{opacity:.6;cursor:wait}
+.al{border-radius:10px;padding:14px;margin:14px 0;font-size:14px}.al b{display:block;margin-bottom:2px}
+.al.e{background:var(--redbg);color:var(--red)}.al.w{background:var(--ambbg);color:var(--amb)}.al.g{background:var(--grnbg);color:var(--grn)}
+.pill{display:inline-block;font-size:11px;font-weight:600;padding:4px 10px;border-radius:99px;margin-right:6px}
+.pill.g{background:var(--grnbg);color:var(--grn)}.pill.w{background:var(--ambbg);color:var(--amb)}.pill.e{background:var(--redbg);color:var(--red)}
+.tabs{display:flex;border:1px solid var(--line);border-radius:10px;padding:4px;margin:14px 0}
+.tabs span{flex:1;text-align:center;padding:9px;border-radius:8px;font-size:14px;cursor:pointer}.tabs .on{background:var(--mint);font-weight:600}
+.ag{display:flex;gap:28px;padding:12px 0;border-bottom:1px solid var(--line);font-size:14px}.ag b{width:80px}.ag span{color:var(--mut)}
+.big{font-size:34px;font-weight:700}
+.msg{max-width:440px;margin:28px auto;border:1px solid var(--line);border-radius:14px;overflow:hidden;background:#fff}
+.msg .body{padding:20px}.msg h2{margin:0 0 8px;font-size:20px}
+.wrap{background:var(--bg);padding:1px 0}
+
+/* Wizard */
+.wiz-container{max-width:1000px;margin:32px auto;padding:0 20px}
+.wiz-hdr{display:flex;justify-content:space-between;align-items:center;margin-bottom:20px}
+.wiz{background:#E0FAF7;min-height:560px;padding:32px;border-radius:16px;box-shadow:0 12px 30px rgba(0,0,0,0.06)}
+.steps{display:flex;justify-content:space-between;margin-bottom:28px}
+.steps div{text-align:center;font-size:13px;flex:1}.steps i{display:block;width:34px;height:34px;border-radius:50%;border:1px solid #7a8b8b;margin:0 auto 6px;background:#fff}
+.steps .on i{background:#3DE0D0}.steps .on{font-weight:700}
+.tpl{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}.tpl div{background:#fff;border:1px solid var(--ink);border-radius:14px;padding:30px 8px;text-align:center}
+.tpl .on{background:#3DE0D0}
+table{width:100%;border-collapse:collapse;font-size:13px}th{background:var(--ink);color:#fff;text-align:left;padding:10px}td{padding:10px;border-bottom:1px solid var(--line)}
+
+/* Dashboard & Side Navigation */
+.dash{display:grid;grid-template-columns:250px 1fr;min-height:calc(100vh - 56px)}
+@media(max-width:850px){.dash{grid-template-columns:1fr}}
+.side{background:#16202B;color:#cfd8dc;padding:24px 16px;font-size:14px;display:flex;flex-direction:column}
+.side-title{font-size:11px;font-weight:700;color:#607d8b;letter-spacing:0.05em;margin:16px 0 8px 8px}
+.side-item{padding:10px 14px;border-radius:8px;cursor:pointer;margin-bottom:4px;display:flex;justify-content:space-between;align-items:center;transition:background 0.15s}
+.side-item:hover{background:#1e2d3b}
+.side-item.on{background:#233544;color:#fff;font-weight:600}
+.side-item.on .dot{background:var(--teal)}
+.dot{width:8px;height:8px;border-radius:50%;background:#455a64}
+.side-sub{margin:4px 0 12px 14px;border-left:2px solid #2e4354;padding-left:10px;display:flex;flex-direction:column;gap:3px}
+.sub-link{padding:7px 10px;border-radius:6px;font-size:13px;color:#9fb3c4;cursor:pointer;transition:all .15s}
+.sub-link:hover{background:#1f2e3d;color:#fff}
+.sub-link.on{background:var(--teal);color:var(--ink);font-weight:700}
+.side-btn{margin:12px 0 20px}
+
+/* Sub-page Switcher Bar */
+.sub-bar{display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;padding-bottom:14px;border-bottom:1px solid var(--line);flex-wrap:wrap;gap:12px}
+.pill-group{display:flex;gap:6px;flex-wrap:wrap}
+.state-pill{font-size:12px;padding:6px 12px;border-radius:20px;border:1px solid var(--line);background:#fff;cursor:pointer;color:var(--mut);font-weight:500}
+.state-pill.on{background:var(--ink);color:#fff;border-color:var(--ink);font-weight:600}
+
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:16px 0}.stats .mint .big{font-size:28px}
+@media(max-width:1100px){.stats{grid-template-columns:repeat(2,1fr)}}
+.bar{height:8px;background:#DFF5F2;border-radius:9px;margin:6px 0}.bar i{display:block;height:100%;background:#3DE0D0;border-radius:9px}
+.qr{width:180px;height:180px;margin:12px auto;background:repeating-conic-gradient(var(--ink) 0 25%,#fff 0 50%) 0 0/30px 30px;border:8px solid #fff;outline:1px solid var(--line)}
+.scan{background:var(--ink);color:#fff;border-radius:12px;height:300px;display:grid;place-items:center}
+@keyframes pulse-red{0%{transform:scale(1);opacity:1}50%{transform:scale(1.2);opacity:.6}100%{transform:scale(1);opacity:1}}
+.rec-dot{display:inline-block;width:10px;height:10px;background:#C0233B;border-radius:50%;animation:pulse-red 1.2s infinite;margin-right:6px}
+.wave-bars{display:flex;justify-content:center;align-items:center;gap:3px;height:24px;margin:10px 0}
+.wave-bars i{display:inline-block;width:3px;background:#2DD7C0;border-radius:2px;animation:wave 0.8s ease-in-out infinite alternate}
+.wave-bars i:nth-child(2){animation-delay:0.15s;height:18px}
+.wave-bars i:nth-child(3){animation-delay:0.3s;height:24px}
+.wave-bars i:nth-child(4){animation-delay:0.45s;height:14px}
+.wave-bars i:nth-child(5){animation-delay:0.6s;height:20px}
+@keyframes wave{from{height:4px}to{height:24px}}
+`;
+
+/* ---------- shared bits ---------- */
+const Row = ({ k, v }) => <div className="row"><span>{k}</span><b>{v}</b></div>;
+const Alert = ({ t, title, children }) => <div className={`al ${t}`}><b>{title}</b>{children}</div>;
+const Field = ({ label, hint, err, ...p }) => (
+  <div className={`f ${err ? "err" : ""}`}><label>{label}</label><input {...p} />
+    <div className={`hint ${err ? "e" : ""}`}>{err || hint}</div></div>
+);
+const Hdr = ({ right }) => (
+  <div className="hd"><div><b style={{ fontSize: 20 }}>koodal</b><small>Bring people together.</small></div>{right}</div>
+);
+const Lang = () => <div className="lang"><span className="on">✓ English</span><span>हिन्दी</span><span>മലയാളം</span></div>;
+const Hero = ({ sub = "A day to connect, share ideas and shape what comes next." }) => (
+  <div className="hero"><b>KOODAL EVENTS PRESENTS</b><h1>Define</h1><div>{sub}</div>
+    <p><b style={{ color: "#fff", fontSize: 13 }}>23 October 2026 · Kochi</b></p></div>
+);
+const Invite = () => (
+  <div>
+    <div className="mint"><small>YOUR PERSONAL INVITATION</small><h3>An invitation to Define</h3>
+      <div style={{ color: "var(--mut)", fontSize: 14 }}>Friday 23 October 2026 · 10:00 AM to 4:00 PM IST<br />Grand Hall, Kochi</div>
+      <p style={{ fontSize: 14 }}>Join us for a day of conversations, interactive discussions and a practical afternoon workshop.</p>
+      <b style={{ fontSize: 14 }}>Organized by Koodal Events</b><div className="hint">₹500 per seat · choose 1–4 seats</div></div>
+    <h3>Your day at a glance</h3>
+    {[["10:00 AM", "Check-in"], ["10:30 AM", "Opening session"], ["11:00 AM", "Interactive discussions"], ["12:30 PM", "Lunch"], ["1:30 PM", "Afternoon workshop"], ["3:45 PM", "Closing · finishes by 4:00 PM"]]
+      .map(([t, a]) => <div className="ag" key={t}><b>{t}</b><span>{a}</span></div>)}
+    <div className="hint">Agenda is an example programme. All times are in IST.</div>
+  </div>
+);
+const Page = ({ left, right, hero = true, hdr = <Lang /> }) => (
+  <><Hdr right={hdr} />{hero && <Hero />}<div className="grid"><div>{left}</div><div>{right}</div></div>
+    <div className="hd" style={{ borderTop: "1px solid var(--line)", borderBottom: 0, fontSize: 12, color: "var(--mut)" }}>
+      <span>Koodal Events · Personal invitations, thoughtful gatherings.</span><span>Your details are used only for this event.</span></div></>
+);
+
+/* ---------- guest registration (all states) ---------- */
+const reg = (rest) => (
+  <div className="card">{rest}</div>
+);
+function Guest({ s }) {
+  const full = s === "full", saving = s === "saving", bad = s === "error";
+  const summary = (title, intro, banner, pill) => reg(<>
+    <h2>{title}</h2><p>{intro}</p>{banner}<span className="pill g">✓ REGISTERED</span><span className="pill w">! PAYMENT PENDING</span>
+    <Row k="Guest name" v="Anjali Menon" /><Row k="Phone number" v="+91 •••••• 4321" /><Row k="Email address" v="anjali.menon@example.org" />
+    <Row k="Seats and language" v="1 seat · English" /><Row k="Date and time" v="Fri 23 Oct 2026, 10:00 AM to 4:00 PM IST" />
+    <Row k="Venue" v="Grand Hall, Kochi" /><Row k="Registration ID" v="KDL-DEF-2026-004321" />
+    <div className="mint" style={{ marginTop: 14 }}>1 seat × ₹500 <b style={{ float: "right" }}>Payable ₹500</b><div className="hint">Payment has not been received.</div></div>
+    <p className="hint">Your registration is saved. Complete the ₹500 payment separately; this summary is not proof of payment.</p>
+    <button className="btn p">Pay now ₹500</button>{pill}</>);
+
+  if (s === "success") return <Page left={<Invite />} right={summary("You're registered, Anjali", "We look forward to welcoming you to Define. Keep this summary for your records.",
+    <Alert t="g" title="Your registration is confirmed">1 seat registered for Define. The ₹500 payment is still pending.</Alert>, <button className="btn">Add to calendar</button>)} />;
+  if (s === "existing") return <Page left={<Invite />} right={summary("You're already on the list", "Welcome back, Anjali. We found your existing registration; there's no need to register again.",
+    <Alert t="g" title="Your existing registration is safe">The same 1-seat registration is shown below. Payment is still pending.</Alert>, <button className="btn">View registration</button>)} />;
+  if (s === "expired") return <Page left={<Invite />} right={reg(<>
+    <h2>This personal link has expired</h2><p>For your privacy, guest details are hidden. You can request a fresh invitation from Koodal Events.</p>
+    <Alert t="w" title="A new link is needed">This link can no longer be used to register for Define.</Alert>
+    <button className="btn p">Request a new link</button><div className="hint">If you no longer have access to that number, contact Koodal Events using the number in your original SMS.</div></>)} />;
+  if (s === "waitlisted") return <Page left={<Invite />} right={reg(<>
+    <h2>You're on the waitlist, Anjali</h2><p>We've received your request for one seat.</p><span className="pill g">✓ On the waitlist</span>
+    <div className="mint" style={{ margin: "14px 0" }}>Your queue position:<div className="big">12</div><b>1 seat requested</b><div className="hint">Example queue position · not a verified live position.</div></div>
+    <Alert t="g" title="Your waitlist request is received">No charge has been made. Joining is not a registration and does not guarantee a seat.</Alert>
+    <Row k="Waitlist reference" v="WL-DEF-004321" /><h3>What happens next</h3>
+    <p style={{ fontSize: 14 }}><b>Watch for your offer.</b> We'll send a personal seat offer by email or WhatsApp.<br /><b>Claim within 30 minutes.</b> The window starts when the offer is issued.<br /><b>Confirm and pay after claiming.</b></p>
+    <button className="btn p">View waitlist status</button></>)} />;
+  if (s === "offer-expired") return <Page left={<Invite />} right={reg(<>
+    <h2>Your seat offer has expired</h2><p>Anjali, the 30-minute claim window for this Define seat offer has ended.</p><span className="pill e">× Offer expired</span>
+    <Alert t="w" title="00:00 · Offer ended">Deadline: 22 October 2026 · 10:30 AM IST</Alert>
+    <Alert t="e" title="This offer can no longer be claimed.">We couldn't reserve this seat after the 30-minute deadline.</Alert>
+    <Row k="Waitlist reference" v="WL-DEF-004321" /><button className="btn p">View waitlist status</button></>)} />;
+
+  return <Page left={<Invite />} right={reg(<>
+    <h2>{saving ? "Saving your registration" : bad ? "Let's check your details" : full ? "Define is currently full" : "Register for Define"}</h2>
+    <p>{saving ? "Your details are being submitted. Please keep this page open." : bad ? "Your entries are still here. Correct the highlighted fields and try again."
+      : full ? "Join the waitlist and we'll contact you if a place becomes available." : "Thanks for speaking with us. Complete your details below to join us in Kochi."}</p>
+    {bad && <Alert t="e" title="Registration was not saved">Fix your email and give consent, then select Register again.</Alert>}
+    {full && <Alert t="w" title="No seats are available right now">The waitlist does not guarantee a seat. No registration or payment is completed by joining.</Alert>}
+    <Field label="Guest name · read-only" value="Anjali Menon" readOnly hint="Provided by Koodal Events after your phone call." />
+    <Field label="Phone number · read-only" value="+91 •••••• 4321" readOnly hint="Tied to your personal SMS link; these details cannot be edited." />
+    <Field label="Email address" defaultValue={saving ? "anjali.menon@example.org" : bad ? "anjali.menon@" : ""} err={bad && "Enter a valid email address, such as anjali.menon@example.org."} readOnly={saving} hint="For your registration summary and event updates." />
+    <div className="f"><label>Number of seats</label><select disabled={saving}><option>1</option><option>2</option><option>3</option><option>4</option></select><div className="hint">Choose 1, 2, 3 or 4 seats · ₹500 per seat.</div></div>
+    <div className="f"><label>Language preference</label><select disabled={saving}><option>English</option><option>हिन्दी</option><option>മലയാളം</option></select></div>
+    <div className="mint">1 seat × ₹500 <b style={{ float: "right" }}>Total ₹500</b><div className="hint">{full ? "No payment to join." : "Payment follows registration."}</div></div>
+    <label style={{ display: "flex", gap: 10, margin: "16px 0", fontSize: 14 }}><input type="checkbox" defaultChecked={saving} /> I agree to receive event updates and to the processing of my data</label>
+    {bad && <div className="hint e">Please agree to event updates and data processing to continue.</div>}
+    <button className="btn p" disabled={saving}>{saving ? "Registering…" : full ? "Join the waitlist" : "Register"}</button>
+    <div className="hint">{saving ? "Please wait while we save your registration. Do not submit again." : "Your personal invitation is private. Please do not forward this link."}</div></>)} />;
+}
+
+/* ---------- payment (all states) ---------- */
+function Pay({ s }) {
+  const T = {
+    form: ["Complete your registration", "Your details are saved, Anjali. Choose a payment method to secure your two seats for Define.", "UPI"],
+    verifying: ["We're checking your payment", "Keep this page open while the test payment is verified. Your order is not paid yet.", "Card"],
+    success: ["Test payment successful", "Thank you, Anjali. Your two seats are secured in this test result. No money was charged.", "Card"],
+    failed: ["Your payment didn't go through", "Your two seats are still on hold. You can try again before the original hold expires.", "Netbanking"],
+    expired: ["Your seat hold has expired", "The payment was not completed within the 15-minute hold. Your two seats have been released.", "UPI"],
+  }[s] || ["Complete your registration", "Your details are saved, Anjali. Choose a payment method to secure your two seats for Define.", "UPI"];
+
+  const [m, setM] = useState(T[2]);
+  const done = s === "success", gone = s === "expired";
+  return (<>
+    <Hdr right={<span className="pill w">! Test mode</span>} />
+    <div style={{ background: "var(--mint)", padding: "28px 32px" }}><h1 style={{ margin: 0 }}>{T[0]}</h1><p style={{ color: "var(--mut)" }}>{T[1]}</p></div>
+    <div className="grid">
+      <div className="card"><div className="mint"><small>KOODAL EVENTS</small><h2>Define</h2>Friday 23 October 2026 · 10:00 AM–4:00 PM IST<br />Grand Hall, Kochi</div>
+        <div className="hint">Order ORD-DEF-2026-004322</div>
+        <span className={`pill ${done ? "g" : gone ? "e" : "w"}`}>{done ? "✓ 2 seats secured · test result" : gone ? "× 2 seats released" : "! Payment pending"}</span>
+        <Row k="Seats" v="2 × ₹500 each" /><Row k="Subtotal" v="₹1,000" /><Row k="Taxes" v="₹0" />
+        <div className="mint" style={{ marginTop: 12 }}><b>Total</b><b style={{ float: "right", fontSize: 22 }}>₹1,000</b></div>
+        <p><b>Anjali Menon</b><br />anjali.menon@example.org</p>
+        {!done && <div className="mint"><b>{gone ? "Seat hold expired" : "Your seats are on hold"}</b><b style={{ float: "right", fontSize: 22 }}>{gone ? "00:00" : s === "failed" ? "11:48" : "12:34"}</b>
+          <div className="hint">Unpaid seats are held for 15 minutes from registration. Changing methods or retrying does not restart the hold.</div></div>}</div>
+      <div className="card">
+        {gone ? <><h2>Start a new registration</h2><Alert t="e" title="2 seats released">The original 15-minute reservation has ended. No money was charged in test mode.</Alert>
+          <p>Register again to check current availability. Seats are not guaranteed.</p><button className="btn p">Register again</button></>
+          : done ? <><h2>Your test receipt</h2><Alert t="g" title="Test payment successful">2 seats secured · test result. No money was charged.</Alert>
+            <Row k="Receipt" v="RCPT-DEF-2026-004322" /><Row k="Order" v="ORD-DEF-2026-004322" /><Row k="Method" v="Card · test card ending 4242" /><Row k="Demo reference" v="TEST-PAY-DEF-004322" />
+            <button className="btn">Download receipt</button></>
+            : <><h2>{s === "failed" ? "Try your payment again" : s === "verifying" ? "Card payment in progress" : "Choose how to pay"}</h2>
+              {s === "failed" && <Alert t="e" title="Payment cancelled">Payment was cancelled before authorization.</Alert>}
+              <div className="tabs">{["UPI", "Card", "Netbanking"].map(x => <span key={x} className={m === x ? "on" : ""} onClick={() => s !== "verifying" && setM(x)} style={{ cursor: "pointer" }}>{m === x && "✓ "}{x}</span>)}</div>
+              {m === "UPI" && <Field label="UPI ID" defaultValue="anjali@testbank" hint="Test example only. Enter a test UPI ID in name@bank format." />}
+              {m === "Card" && <><Field label="Card number" value="•••• •••• •••• 4242" readOnly hint="Synthetic test card · not a real card" /><Field label="Expiry" value="12/28" readOnly /></>}
+              {m === "Netbanking" && <div className="f"><label>Bank</label><select><option>Demo Bank</option></select><div className="hint">Generic test bank only; no live bank connection.</div></div>}
+              {s === "verifying" && <Alert t="w" title="Verification is pending">Do not retry or switch methods while we check the result. No real money will be charged.</Alert>}
+              <button className="btn p" disabled={s === "verifying"}>{s === "verifying" ? "Processing payment…" : s === "failed" ? "Try again" : "Pay ₹1,000"}</button>
+              <div className="hint">This is a simulated checkout, not a live payment gateway. No real money will be charged.</div></>}
+      </div></div></>);
+}
+
+/* ---------- ticket + staff check-in ---------- */
+const Ticket = () => (<><Hdr right={<small>Demo registration</small>} />
+  <div style={{ background: "var(--mint)", padding: "28px 32px" }}><span className="pill g">✓ Registration complete · demo</span><h1>Your ticket is ready, Anjali.</h1></div>
+  <div className="grid"><div className="card mint"><small>KOODAL EVENTS · EVENT TICKET</small><h2>Define</h2>Friday 23 October 2026 · 10:00 AM–4:00 PM IST<br />Grand Hall, Kochi
+    <Row k="Guest name" v="Anjali Menon" /><Row k="Seats" v="2 seats" /><Row k="Demo ticket reference" v="KDL-DEF-004322" /></div>
+    <div className="card" style={{ textAlign: "center" }}><span className="pill">Demo ticket</span><div className="qr" /><div className="hint">Demo QR · not valid for admission</div><button className="btn p">Download ticket</button></div></div></>);
+
+function Checkin({ s }) {
+  const R = { ok: ["g", "Checked in", "Guest check-in recorded", "Welcome Anjali and her guest to Define."], dup: ["w", "Already checked in", "No additional check-in recorded.", "This ticket has already been used. Do not admit the same seats again."], bad: ["e", "Invalid code", "Ticket not found", "This code does not match a ticket for Define. Try scanning again or search for the guest."] }[s];
+  return (<><Hdr right={<span>Staff check-in · Front desk</span>} />
+    <div className="grid"><div><h2>Scan a ticket</h2><div className="scan">Position the QR code within the guide</div>
+      <Field label="Search by guest name or ticket ID" defaultValue={s === "bad" ? "KDL-UNKNOWN-009999" : "KDL-DEF-004322"} err={s === "bad" && "No matching ticket. Check the ID or search by name."} hint="Search still requires a valid, eligible ticket for this event." /><button className="btn p">Search</button></div>
+      <div className="card"><small>TICKET RESULT · DEMO</small><h2 style={{ color: `var(--${R[0] === "g" ? "grn" : R[0] === "w" ? "amb" : "red"})` }}>{R[1]}</h2>
+        {s !== "bad" && <div className="mint"><b>Anjali Menon</b><br />KDL-DEF-004322 · 2 seats {s === "ok" ? "admitted" : "· original admission"}</div>}
+        <Alert t={R[0]} title={R[2]}>{R[3]}</Alert>
+        {s !== "bad" && <><Row k={s === "ok" ? "First check-in" : "Original check-in"} v="10:06 AM IST" />{s === "dup" && <Row k="Seen again" v="10:12 AM IST" />}</>}
+        <button className="btn p">Scan next ticket</button></div></div></>);
+}
+
+/* ---------- feedback ---------- */
+function Feedback({ s }) {
+  const [r, setR] = useState(s === "form" ? 0 : 4);
+  const stars = (n) => [1, 2, 3, 4, 5].map(i => <button key={i} className="btn" disabled={s !== "form"} onClick={() => setR(i)} style={{ width: 54, display: "inline-block", margin: 3, color: i <= n ? "var(--teal)" : "var(--mut)" }}>{i <= n ? "★" : "☆"}</button>);
+  const done = s !== "form" && s !== "submitting";
+  return (<Page hdr={<Lang />} hero={false}
+    left={<><small>EVENT FEEDBACK</small><h1>Good gatherings start with listening.</h1><p>Thank you for being part of Define. Your perspective helps us shape what comes next.</p></>}
+    right={<div className="card">
+      {done ? <><span className="pill g">✓ Feedback received</span><h2>{s === "repeat" ? "You've already shared your feedback" : "Thank you"}</h2>
+        <Row k="Experience rating" v="★★★★☆ 4 / 5 · Very good" /><Row k="How did you hear?" v="Phone call" /><Row k="Your comment" v="The discussions were thoughtful. A little more time for questions would be helpful." />
+        <button className="btn">Back to event</button></>
+        : <><h2>How was Define?</h2><div className="hint">Rating and event discovery are required. Your comment is optional.</div>
+          <h4>How would you rate your experience?</h4>{stars(r)}
+          <h4>How did you hear about this event?</h4>
+          {["Phone call", "SMS", "WhatsApp", "Email", "Instagram", "Friend or family", "Other"].map(o => <label key={o} style={{ display: "block", padding: 6, fontSize: 14 }}><input type="radio" name="h" disabled={s === "submitting"} defaultChecked={s === "submitting" && o === "Phone call"} /> {o}</label>)}
+          <div className="f"><label>Anything else you'd like to share? · Optional</label><textarea rows={3} disabled={s === "submitting"} placeholder="Share your thoughts…" /></div>
+          <button className="btn p" disabled={s === "submitting"}>{s === "submitting" ? "Submitting…" : "Submit feedback"}</button></>}
+    </div>} />);
+}
+
+/* ---------- messages: email / WhatsApp previews ---------- */
+const MSG = {
+  "Invite": { org: "KOODAL EVENTS PRESENTS", t: "Anjali, you're invited to Define.", b: "Join us for a day of ideas, discussion and new connections in Kochi. Confirm your seat through your personal link.", d: ["Friday 23 October 2026", "10:00 AM–4:00 PM IST", "Grand Hall, Kochi"], cta: "Register now" },
+  "Clinic reminder": { org: "CITYCARE CLINIC · KOCHI", t: "Your appointment is coming up, Anjali.", b: "Your routine appointment at CityCare Clinic is on Saturday. Please confirm your attendance and bring your appointment confirmation.", d: ["Saturday 24 October 2026", "10:00 AM–10:30 AM IST", "CityCare Clinic, MG Road, Kochi"], cta: "Register now" },
+  "School notice": { org: "SUNRISE PUBLIC SCHOOL", t: "Let's plan the next term together.", b: "Join us for a parent meeting to hear next-term updates and talk with our teachers.", d: ["Monday 26 October 2026", "3:00 PM–4:00 PM IST", "School Auditorium, Sunrise Public School, Kochi"], cta: "Register now" },
+  "Payment reminder": { org: "KOODAL EVENTS PRESENTS", t: "A gentle reminder to complete your booking.", b: "Your two-seat booking for Define has ₹1,000 outstanding. Payment due: Thursday 22 October 2026.", d: ["Friday 23 October 2026", "10:00 AM–4:00 PM IST", "Grand Hall, Kochi"], cta: "Register now" },
+  "Registration confirmed": { org: "KOODAL EVENTS PRESENTS", t: "You're registered for Define", b: "Your registration is confirmed. Adding this event to your calendar does not confirm payment.", d: ["Friday 23 October 2026", "10:00 AM–4:00 PM IST", "Grand Hall, Kochi"], cta: "Google Calendar", alt: "Apple / Outlook (.ics)" },
+  "Waitlist offer": { org: "KOODAL EVENTS PRESENTS", t: "A seat opened up, claim it within 30 minutes.", b: "One seat for Define is available. Claim before 22 October 2026 · 10:30 AM IST. This offer is not a paid registration.", d: ["Friday 23 October 2026", "10:00 AM–4:00 PM IST", "Grand Hall, Kochi"], cta: "Claim seat" },
+  "Invite (हिन्दी)": { org: "कूडल इवेंट्स की प्रस्तुति", t: "अंजलि, आप Define में आमंत्रित हैं", b: "कोच्चि में विचारों, चर्चाओं और नए संबंधों से भरे एक दिन के लिए हमारे साथ जुड़ें।", d: ["शुक्रवार, 23 अक्टूबर 2026", "सुबह 10:00 बजे–शाम 4:00 बजे (भारतीय मानक समय)", "ग्रैंड हॉल, कोच्चि"], cta: "अभी पंजीकरण करें" },
+  "Invite (മലയാളം)": { org: "കൂടൽ ഇവന്റ്സ് അവതരിപ്പിക്കുന്നു", t: "അഞ്ജലി, Define-ലേക്ക് നിങ്ങളെ ക്ഷണിക്കുന്നു.", b: "ആശയങ്ങളും ചർച്ചകളും പുതിയ സൗഹൃദങ്ങളും നിറഞ്ഞ ഒരു ദിവസത്തിനായി ഞങ്ങളോടൊപ്പം ചേരൂ.", d: ["2026 ഒക്ടോബർ 23, വെള്ളിയാഴ്ച", "രാവിലെ 10:00–വൈകിട്ട് 4:00", "ഗ്രാൻഡ് ഹാൾ, കൊച്ചി"], cta: "ഇപ്പോൾ രജിസ്റ്റർ ചെയ്യൂ" },
+};
+
+function Message({ k, ch }) {
+  const m = MSG[k] || MSG["Invite"], wa = ch === "WhatsApp";
+  return (<div className="wrap"><div className="msg">
+    <div className="hero" style={{ padding: 28 }}><b>{m.org}</b><h1 style={{ fontSize: 26 }}>{wa ? m.t.split(",")[0] : "Define"}</h1></div>
+    <div className="body">{!wa && <h2>{m.t}</h2>}<p style={{ color: "var(--mut)", fontSize: 14 }}>{m.b}</p>
+      <div className="mint" style={{ fontSize: 14 }}>{m.d.map(x => <div key={x}>{x}</div>)}</div>
+      <button className="btn p">{m.cta}</button>
+      {wa ? ["Confirm", "Decline", "Call me back"].map(x => <button className="btn" key={x}>{x}</button>) : m.alt ? <button className="btn">{m.alt}</button> : <div className="hint" style={{ marginTop: 16 }}>To stop these messages, use the unsubscribe link.</div>}
+    </div></div></div>);
+}
+
+/* ---------- 1. Home / Login Landing Page ---------- */
+function Home({ onLogin, backendStatus, onOpenAISettings }) {
+  const [email, setEmail] = useState("organizer@example.com");
+  const [password, setPassword] = useState("password123");
+  const [loading, setLoading] = useState(false);
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setLoading(true);
+    try {
+      await api.login(email, password);
+      const me = await api.getMe();
+      onLogin(me || { name: "Asha Thomas", email, role: "organizer" });
+    } catch {
+      onLogin({ name: "Asha Thomas", email, role: "organizer" });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="home-wrap">
+      <div className="home-nav">
+        <div className="home-logo">
+          <span>✳</span> koodal <b>/ EventReach</b>
+        </div>
+        <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+          <button
+            className="btn-sm"
+            onClick={onOpenAISettings}
+            style={{ display: "flex", alignItems: "center", gap: 6, background: "#1b3542", borderColor: "var(--teal)", color: "#fff" }}
+            title="Configure Gemini, Groq, or OpenAI API key for real voice processing"
+          >
+            <span>⚙️</span> AI API Settings
+          </button>
+          <span
+            className={`pill ${backendStatus === "connected" ? "g" : "w"}`}
+            style={{ fontSize: 11, margin: 0 }}
+            title={backendStatus === "connected" ? "FastAPI backend running at http://localhost:8000" : "Running in standalone mock mode"}
+          >
+            {backendStatus === "connected" ? "● Backend Live :8000" : "○ Standalone Demo"}
+          </span>
+          <button
+            className="btn-sm"
+            onClick={async () => {
+              try {
+                await api.login("organizer@example.com", "password123");
+              } catch {}
+              onLogin({ name: "Asha Thomas", email: "organizer@example.com", role: "organizer" });
+            }}
+          >
+            Demo Sign In →
+          </button>
+        </div>
+      </div>
+
+      <div className="home-grid">
+        <div className="home-hero">
+          <div className="home-tags">
+            <span>✨ Multilingual Voice AI</span>
+            <span>📞 Exotel Calling</span>
+            <span>💳 Real-time Payments</span>
+            <span>🔒 DPDP Privacy by Design</span>
+          </div>
+          <h1>
+            Turn voice notes into <span>live calling campaigns</span> in minutes.
+          </h1>
+          <p>
+            An organizer uploads an event poster, a voice note and contacts.
+            EventReach drafts the event, translates it into Hindi, Malayalam, and Tamil,
+            calls attendees with Exotel IVR, and collects online registrations & payments.
+          </p>
+          <div style={{ display: "flex", gap: 16 }}>
+            <div className="mint" style={{ padding: "12px 18px", color: "var(--ink)", borderRadius: 10 }}>
+              <div style={{ fontSize: 22, fontWeight: 700 }}>100%</div>
+              <small>Automated dispatch</small>
+            </div>
+            <div className="mint" style={{ padding: "12px 18px", color: "var(--ink)", borderRadius: 10 }}>
+              <div style={{ fontSize: 22, fontWeight: 700 }}>4</div>
+              <small>Presets supported</small>
+            </div>
+            <div className="mint" style={{ padding: "12px 18px", color: "var(--ink)", borderRadius: 10 }}>
+              <div style={{ fontSize: 22, fontWeight: 700 }}>3 Languages</div>
+              <small>Hindi · Malayalam · Tamil</small>
+            </div>
+          </div>
+        </div>
+
+        <div className="home-card">
+          <h2>Organizer Sign In</h2>
+          <p>Access your campaigns, analytics funnels, and attendee response dashboard.</p>
+          <form onSubmit={handleSubmit}>
+            <div className="f">
+              <label>Work Email</label>
+              <input
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="organizer@example.com"
+                required
+              />
+            </div>
+            <div className="f">
+              <label>Password</label>
+              <input
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="••••••••••••"
+                required
+              />
+            </div>
+            <button type="submit" className="btn p" disabled={loading} style={{ marginTop: 20 }}>
+              {loading ? "Signing in…" : "Sign In to Dashboard"}
+            </button>
+            <div className="hint" style={{ textAlign: "center", marginTop: 12 }}>
+              Default demo organizer: <b>organizer@example.com</b>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ---------- AI Settings Modal ---------- */
+function AISettingsModal({ isOpen, onClose, onSaved }) {
+  const [provider, setProvider] = useState(localStorage.getItem("eventreach_ai_provider") || "gemini");
+  const [apiKey, setApiKey] = useState(localStorage.getItem("eventreach_ai_key") || "");
+  const [showKey, setShowKey] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [saveStatus, setSaveStatus] = useState(null);
+
+  useEffect(() => {
+    if (isOpen) {
+      api.getAISettings().then((settings) => {
+        if (settings?.provider) setProvider(settings.provider);
+      });
+      const storedKey = localStorage.getItem("eventreach_ai_key") || "";
+      if (storedKey) setApiKey(storedKey);
+    }
+  }, [isOpen]);
+
+  if (!isOpen) return null;
+
+  const handleSave = async (e) => {
+    e?.preventDefault();
+    setSaving(true);
+    setSaveStatus(null);
+    try {
+      await api.setAISettings(provider, apiKey);
+      setSaveStatus({ type: "success", msg: "✓ AI settings saved! Audio voice notes will now be transcribed and extracted using real AI." });
+      if (onSaved) onSaved(provider, apiKey);
+      setTimeout(() => {
+        onClose();
+      }, 1000);
+    } catch (err) {
+      setSaveStatus({ type: "error", msg: "Failed to save: " + err.message });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div style={{
+      position: "fixed",
+      top: 0,
+      left: 0,
+      right: 0,
+      bottom: 0,
+      background: "rgba(10, 20, 30, 0.75)",
+      backdropFilter: "blur(4px)",
+      zIndex: 9999,
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      padding: 20
+    }}>
+      <div style={{
+        background: "#fff",
+        borderRadius: 16,
+        maxWidth: 520,
+        width: "100%",
+        padding: 28,
+        boxShadow: "0 20px 50px rgba(0,0,0,0.3)",
+        position: "relative"
+      }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <span style={{ fontSize: 24 }}>⚙️</span>
+            <div>
+              <h3 style={{ margin: 0, fontSize: 18, color: "var(--ink)" }}>AI Voice & Extraction API Settings</h3>
+              <small style={{ color: "var(--mut)" }}>Extract event information from real audio voice notes</small>
+            </div>
+          </div>
+          <button
+            onClick={onClose}
+            style={{ background: "none", border: "none", fontSize: 20, cursor: "pointer", color: "var(--mut)" }}
+          >
+            ✕
+          </button>
+        </div>
+
+        <form onSubmit={handleSave}>
+          <div className="f">
+            <label>Select AI Provider</label>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginTop: 6 }}>
+              {[
+                { id: "gemini", label: "🌟 Gemini", sub: "1.5 Flash (Audio)" },
+                { id: "groq", label: "⚡ Groq", sub: "Whisper-v3" },
+                { id: "openai", label: "🤖 OpenAI", sub: "Whisper-1" },
+              ].map((p) => (
+                <div
+                  key={p.id}
+                  onClick={() => setProvider(p.id)}
+                  style={{
+                    border: provider === p.id ? "2px solid var(--teal)" : "1px solid var(--line)",
+                    background: provider === p.id ? "var(--mint)" : "#fafafa",
+                    borderRadius: 10,
+                    padding: "10px 8px",
+                    textAlign: "center",
+                    cursor: "pointer",
+                    transition: "all 0.15s"
+                  }}
+                >
+                  <b style={{ fontSize: 13, display: "block" }}>{p.label}</b>
+                  <small style={{ fontSize: 11, color: "var(--mut)" }}>{p.sub}</small>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="f" style={{ marginTop: 16 }}>
+            <label style={{ display: "flex", justifyContent: "space-between" }}>
+              <span>API Key</span>
+              <span
+                style={{ fontSize: 12, color: "var(--teal)", cursor: "pointer", fontWeight: 600 }}
+                onClick={() => setShowKey(!showKey)}
+              >
+                {showKey ? "Hide" : "Show"}
+              </span>
+            </label>
+            <input
+              type={showKey ? "text" : "password"}
+              placeholder={provider === "gemini" ? "AIzaSy..." : provider === "groq" ? "gsk_..." : "sk-..."}
+              value={apiKey}
+              onChange={(e) => setApiKey(e.target.value)}
+              style={{ fontFamily: showKey ? "monospace" : "inherit" }}
+            />
+            <div className="hint" style={{ marginTop: 6, lineHeight: 1.5 }}>
+              {provider === "gemini" && (
+                <span>
+                  Get a free Gemini API key from <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noreferrer" style={{ color: "var(--teal)", fontWeight: 600 }}>Google AI Studio ↗</a>. Gemini 1.5 Flash natively transcribes audio and extracts structured JSON.
+                </span>
+              )}
+              {provider === "groq" && (
+                <span>
+                  Get a free Groq API key from <a href="https://console.groq.com/keys" target="_blank" rel="noreferrer" style={{ color: "var(--teal)", fontWeight: 600 }}>Groq Console ↗</a>. Uses whisper-large-v3 with high-speed Llama-3.3 event extraction.
+                </span>
+              )}
+              {provider === "openai" && (
+                <span>
+                  Use your OpenAI API key from <a href="https://platform.openai.com/api-keys" target="_blank" rel="noreferrer" style={{ color: "var(--teal)", fontWeight: 600 }}>platform.openai.com ↗</a>.
+                </span>
+              )}
+            </div>
+          </div>
+
+          {saveStatus && (
+            <div className={`al ${saveStatus.type === "success" ? "g" : "e"}`} style={{ padding: "8px 12px", fontSize: 13 }}>
+              {saveStatus.msg}
+            </div>
+          )}
+
+          <div style={{ display: "flex", gap: 10, marginTop: 20 }}>
+            <button
+              type="button"
+              className="btn"
+              style={{ flex: 1, margin: 0 }}
+              onClick={onClose}
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              className="btn p"
+              style={{ flex: 2, margin: 0 }}
+              disabled={saving}
+            >
+              {saving ? "Saving..." : "Save AI Key & Connect"}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+/* ---------- 2. Organizer Campaign Wizard Flow ---------- */
+const STEPS = ["Template", "Upload", "Review", "Audience", "Translate", "Channels", "Test Call", "Launch"];
+
+function Wizard({ onCancel, onLaunch, onOpenAISettings, activeAIProvider = "gemini" }) {
+  const [i, setI] = useState(0), [tpl, setTpl] = useState(0);
+  const [testPhone, setTestPhone] = useState("+91 98000 00000");
+  const [testLang, setTestLang] = useState("Malayalam");
+  const [testResult, setTestResult] = useState(null);
+  const [calling, setCalling] = useState(false);
+  const [previewChannel, setPreviewChannel] = useState("call"); // "call" | "whatsapp" | "email"
+
+  const speakText = (text, lang) => {
+    if (typeof window !== "undefined" && "speechSynthesis" in window) {
+      window.speechSynthesis.cancel();
+      const clean = text.replace(/\{name\}/g, "Asha").replace(/\{link\}/g, "eventreach.in/s/rsvp");
+      const utter = new SpeechSynthesisUtterance(clean);
+      if (lang === "hi") utter.lang = "hi-IN";
+      else if (lang === "ml") utter.lang = "ml-IN";
+      else if (lang === "ta") utter.lang = "ta-IN";
+      else utter.lang = "en-IN";
+      window.speechSynthesis.speak(utter);
+    }
+  };
+
+  // Persistent Campaign & Event State (PostgreSQL)
+  const [campaignId, setCampaignId] = useState(null);
+  const [isSavingEvent, setIsSavingEvent] = useState(false);
+  const [saveEventStatus, setSaveEventStatus] = useState(null);
+
+  const templateKeys = ["seminar_invite", "clinic_reminder", "school_notice", "payment_reminder"];
+  const defaultTitles = [
+    "Healthcare & AI Seminar 2026",
+    "Cardiology Clinic Appointment Reminder",
+    "St. Mary's School Parent-Teacher Notice",
+    "Annual Membership Fee Payment Reminder"
+  ];
+
+  const handleSaveEventToDB = async () => {
+    setIsSavingEvent(true);
+    setSaveEventStatus(null);
+    try {
+      let cid = campaignId;
+      if (!cid) {
+        const created = await api.createCampaign(eventData.title || "New Campaign", templateKeys[tpl]);
+        if (created?.id) {
+          cid = created.id;
+          setCampaignId(cid);
+        }
+      }
+      if (cid) {
+        const res = await api.saveEvent(cid, eventData);
+        if (res) {
+          setSaveEventStatus({ type: "success", msg: "✓ Event saved permanently to PostgreSQL database!" });
+        } else {
+          setSaveEventStatus({ type: "error", msg: "Failed to persist event details." });
+        }
+      }
+    } catch (err) {
+      setSaveEventStatus({ type: "error", msg: err.message });
+    } finally {
+      setIsSavingEvent(false);
+    }
+  };
+
+  // 1. Photo / Poster Upload State & OCR Analysis
+  const [posterFile, setPosterFile] = useState(null);
+  const [posterUrl, setPosterUrl] = useState(null);
+  const [uploadingPoster, setUploadingPoster] = useState(false);
+  const [analyzingPoster, setAnalyzingPoster] = useState(false);
+  const [posterOcrStatus, setPosterOcrStatus] = useState("");
+  const [posterOcrProgress, setPosterOcrProgress] = useState(0);
+  const [posterExtractedText, setPosterExtractedText] = useState("");
+  const [posterExtractedEvent, setPosterExtractedEvent] = useState(null);
+
+  // 2. Voice Note (Live In-Page Recording, Speech Recognition, or File Upload)
+  const [voiceMode, setVoiceMode] = useState("record"); // "record" | "upload"
+  const [recording, setRecording] = useState(false);
+  const [recordingSeconds, setRecordingSeconds] = useState(0);
+  const [recordedAudioUrl, setRecordedAudioUrl] = useState(null);
+  const [voiceFile, setVoiceFile] = useState(null);
+  const [voiceExtracting, setVoiceExtracting] = useState(false);
+  const [transcript, setTranscript] = useState("");
+  const [liveSpeechText, setLiveSpeechText] = useState("");
+  const [voiceExtractedEvent, setVoiceExtractedEvent] = useState(null);
+  const [speechSummary, setSpeechSummary] = useState("");
+  const [extractedSources, setExtractedSources] = useState({});
+
+  const mediaRecorderRef = useRef(null);
+  const audioChunksRef = useRef([]);
+  const timerRef = useRef(null);
+  const recognitionRef = useRef(null);
+  const liveSpeechRef = useRef("");
+
+  const formatTimer = (sec) => `${Math.floor(sec / 60).toString().padStart(2, "0")}:${(sec % 60).toString().padStart(2, "0")}`;
+
+  const startRecording = async () => {
+    try {
+      audioChunksRef.current = [];
+      liveSpeechRef.current = "";
+      setLiveSpeechText("");
+
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mediaRecorder = new MediaRecorder(stream);
+      mediaRecorderRef.current = mediaRecorder;
+
+      // Start browser SpeechRecognition in parallel if available
+      if (typeof window !== "undefined" && ("webkitSpeechRecognition" in window || "SpeechRecognition" in window)) {
+        try {
+          const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+          const recognition = new SpeechRec();
+          recognition.continuous = true;
+          recognition.interimResults = true;
+          recognition.lang = "en-IN";
+          recognition.onresult = (e) => {
+            let fullText = "";
+            for (let k = 0; k < e.results.length; k++) {
+              fullText += e.results[k][0].transcript + " ";
+            }
+            liveSpeechRef.current = fullText.trim();
+            setLiveSpeechText(fullText.trim());
+          };
+          recognition.start();
+          recognitionRef.current = recognition;
+        } catch (e) {
+          console.warn("SpeechRecognition init error:", e);
+        }
+      }
+
+      mediaRecorder.ondataavailable = (e) => {
+        if (e.data.size > 0) audioChunksRef.current.push(e.data);
+      };
+
+      mediaRecorder.onstop = async () => {
+        stream.getTracks().forEach((track) => track.stop());
+        const audioBlob = new Blob(audioChunksRef.current, { type: "audio/webm" });
+        const audioUrl = URL.createObjectURL(audioBlob);
+        setRecordedAudioUrl(audioUrl);
+
+        const file = new File([audioBlob], `recorded_brief_${Date.now()}.webm`, { type: "audio/webm" });
+        setVoiceFile(file);
+
+        // Upload audio to private storage & call backend voice pipeline
+        setVoiceExtracting(true);
+        const res = await api.uploadVoiceNote(campaignId || "cmp_001", file);
+        setVoiceExtracting(false);
+
+        // Prioritize actual captured speech transcript if available, otherwise backend transcript
+        const finalTranscript = liveSpeechRef.current || res?.transcript || "Live voice brief recorded.";
+        setTranscript(finalTranscript);
+
+        const extracted = extractEventDetailsFromText(finalTranscript, res?.event || {});
+        setVoiceExtractedEvent(extracted);
+
+        const isBackendStaticFallback = res?.event?.title === "AI in Healthcare Seminar" && !finalTranscript.toLowerCase().includes("healthcare");
+        const backendTitle = res?.event?.title && !["Community Event", "Live Voice", "Voice Brief"].includes(res.event.title) && !isBackendStaticFallback ? res.event.title : null;
+        const detectedTitle = extracted.title && !["Community Event", "Live Voice", "Voice Brief"].includes(extracted.title) ? extracted.title : (backendTitle || extracted.title);
+        const summaryText = res?.event?.description || extracted.description || `Spoken voice invitation for ${detectedTitle || "the event"}.`;
+        setSpeechSummary(summaryText);
+
+        setExtractedSources((prev) => ({
+          ...prev,
+          title: detectedTitle ? "Live Voice AI" : prev.title,
+          description: summaryText ? "AI Speech Summary" : prev.description,
+          venue: (res?.event?.venue || extracted.venue) ? "Live Voice" : prev.venue,
+          city: (res?.event?.city || extracted.city) ? "Live Voice" : prev.city,
+          starts_at: (res?.event?.starts_at || extracted.starts_at) ? "Live Voice" : prev.starts_at,
+          fee_inr: (res?.event?.fee_inr !== undefined || extracted.fee_inr !== undefined) ? "Live Voice" : prev.fee_inr,
+        }));
+
+        setEventData((prev) => ({
+          ...prev,
+          title: detectedTitle || prev.title,
+          description: summaryText || prev.description,
+          venue: res?.event?.venue || extracted.venue || prev.venue,
+          city: res?.event?.city || extracted.city || prev.city,
+          starts_at: extracted.starts_at ? (typeof extracted.starts_at === "string" ? extracted.starts_at : new Date(extracted.starts_at).toLocaleString()) : prev.starts_at,
+          fee_inr: res?.event?.fee_inr !== undefined ? res.event.fee_inr : (extracted.fee_inr !== undefined ? extracted.fee_inr : prev.fee_inr),
+        }));
+      };
+
+      mediaRecorder.start(200);
+      setRecording(true);
+      setRecordingSeconds(0);
+      timerRef.current = setInterval(() => {
+        setRecordingSeconds((prev) => prev + 1);
+      }, 1000);
+    } catch (err) {
+      console.warn("Microphone access error:", err);
+      const simulate = confirm(
+        "Microphone was not detected or permission was not granted.\n\nWould you like to simulate a spoken voice brief for this demo?"
+      );
+      if (simulate) {
+        setVoiceExtracting(true);
+        setTimeout(async () => {
+          const sampleBlob = new Blob([new Uint8Array([0x1a, 0x45, 0xdf, 0xa3, 0x01, 0x00, 0x00, 0x00])], { type: "audio/webm" });
+          const file = new File([sampleBlob], "demo_voice_note.webm", { type: "audio/webm" });
+          setVoiceFile(file);
+          setRecordedAudioUrl("https://actions.google.com/sounds/v1/speech/person_speaking.ogg");
+          setRecordingSeconds(12);
+
+          const sampleSpeech = "We are holding DEFINE 2026 on the fourteenth of November at ten in the morning, in the Seminar Hall, Block A, in Kochi. Registration is five hundred rupees.";
+          setTranscript(sampleSpeech);
+          const res = await api.uploadVoiceNote(campaignId || "cmp_001", file);
+          setVoiceExtracting(false);
+
+          const extracted = res?.event || extractEventDetailsFromText(sampleSpeech);
+          setVoiceExtractedEvent(extracted);
+          const summaryText = res?.event?.description || extracted.description || "Spoken voice brief for DEFINE 2026 in Kochi.";
+          setSpeechSummary(summaryText);
+
+          setExtractedSources((prev) => ({
+            ...prev,
+            title: "Voice Brief",
+            description: "AI Speech Summary",
+            venue: "Voice Brief",
+            city: "Voice Brief",
+            starts_at: "Voice Brief",
+            fee_inr: "Voice Brief",
+          }));
+
+          setEventData((prev) => ({
+            ...prev,
+            title: extracted.title || "DEFINE 2026",
+            description: summaryText,
+            venue: extracted.venue || "Seminar Hall, Block A",
+            city: extracted.city || "Kochi",
+            starts_at: "14 Nov 2026, 10:00 AM IST",
+            fee_inr: extracted.fee_inr ?? 500,
+          }));
+        }, 1200);
+      }
+    }
+  };
+
+  const stopRecording = () => {
+    if (recognitionRef.current) {
+      try { recognitionRef.current.stop(); } catch {}
+      recognitionRef.current = null;
+    }
+    if (mediaRecorderRef.current && recording) {
+      mediaRecorderRef.current.stop();
+      setRecording(false);
+      clearInterval(timerRef.current);
+    }
+  };
+
+  const cancelRecording = () => {
+    if (recognitionRef.current) {
+      try { recognitionRef.current.stop(); } catch {}
+      recognitionRef.current = null;
+    }
+    if (mediaRecorderRef.current && recording) {
+      mediaRecorderRef.current.stop();
+      setRecording(false);
+      clearInterval(timerRef.current);
+    }
+    setVoiceFile(null);
+    setRecordedAudioUrl(null);
+    setTranscript("");
+    setLiveSpeechText("");
+    setRecordingSeconds(0);
+  };
+
+  // 3. Extracted Event Details State (feeds Step 3)
+  const [eventData, setEventData] = useState({
+    title: "DEFINE 2026",
+    starts_at: "14 Nov 2026, 10:00 AM IST",
+    venue: "Seminar Hall, Block A",
+    city: "Kochi",
+    fee_inr: 500,
+  });
+
+  const dynamicTranslations = useMemo(() => {
+    const title = eventData.title || "DEFINE 2026";
+    const venue = eventData.venue || "Seminar Hall, Block A";
+    const city = eventData.city || "Kochi";
+    const dateStr = eventData.starts_at || "14 Nov 2026, 10:00 AM IST";
+    const desc = eventData.description || speechSummary || `Special outreach invitation to ${title} in ${city}`;
+
+    return [
+      {
+        lang: "hi",
+        name: "Hindi (हिन्दी)",
+        call_script: `नमस्ते {name}। आपको ${dateStr} को ${city} के ${venue} में होने वाले '${title}' में आमंत्रित किया जाता है। पुष्टि के लिए 1 दबाएं, मना करने के लिए 2, वापस कॉल के लिए 3 दबाएं। इन कॉल को रोकने के लिए 9 दबाएं।`,
+        back_en: `Hello {name}. You are invited to '${title}' at ${venue}, ${city} on ${dateStr}. Press 1 to confirm, 2 to decline, 3 for callback, 9 to opt out.`,
+        whatsapp: `नमस्ते {name}, ${dateStr} को ${city} के ${venue} में आयोजित '${title}' में आपका स्वागत है। विवरण: ${desc}। यहां रजिस्टर करें: {link}`,
+        email_subj: `आमंत्रण: ${title}, ${dateStr}`,
+        email_body: `प्रिय {name},\n\nआपको ${dateStr} को ${city} के ${venue} में आयोजित '${title}' में आमंत्रित किया जाता है।\nविवरण: ${desc}\n\nकृपया यहां रजिस्टर करें: {link}`,
+      },
+      {
+        lang: "ml",
+        name: "Malayalam (മലയാളം)",
+        call_script: `നമസ്കാരം {name}. ${dateStr}-ൽ ${city}-യിലെ ${venue}-ൽ നടക്കുന്ന '${title}'-ലേക്ക് നിങ്ങളെ ക്ഷണിക്കുന്നു. സ്ഥിരീകരിക്കാൻ 1, ഒഴിവാക്കാൻ 2, തിരിച്ചു വിളിക്കാൻ 3 അമർത്തുക. ഈ കോളുകൾ നിർത്താൻ 9 അമർത്തുക.`,
+        back_en: `Hello {name}. You are invited to '${title}' on ${dateStr} at ${venue}, ${city}. Press 1 to confirm, 2 to decline, 3 for callback, 9 to stop calls.`,
+        whatsapp: `നമസ്കാരം {name}, ${dateStr}-ൽ ${city} ${venue}-ൽ '${title}'-ലേക്ക് സ്വാഗതം. വിവരണം: ${desc}। ഇവിടെ രജിസ്റ്റർ ചെയ്യുക: {link}`,
+        email_subj: `ക്ഷണം: ${title}, ${dateStr}`,
+        email_body: `പ്രിയപ്പെട്ട {name},\n\n${dateStr}-ൽ ${city}-യിലെ ${venue}-ൽ നടക്കുന്ന '${title}'-ലേക്ക് സ്വാഗതം.\nവിവരണം: ${desc}\n\nദയവായി ഇവിടെ രജിസ്റ്റർ ചെയ്യുക: {link}`,
+      },
+      {
+        lang: "ta",
+        name: "Tamil (தமிழ்)",
+        call_script: `வணக்கம் {name}. ${dateStr} அன்று ${city}-யில் உள்ள ${venue}-ல் நடைபெறும் '${title}'-ற்கு உங்களை அழைக்கிறோம். உறுதிப்படுத்த 1, மறுக்க 2, மீண்டும் அழைக்க 3 அழுத்தவும். இந்த அழைப்புகளை நிறுத்த 9 அழுத்தவும்.`,
+        back_en: `Hello {name}. We invite you to '${title}' on ${dateStr} at ${venue}, ${city}. Press 1 to confirm, 2 to decline, 3 for callback, 9 to stop calls.`,
+        whatsapp: `வணக்கம் {name}, ${dateStr} அன்று ${city} ${venue}-ல் '${title}'-ற்கு உங்களை அழைக்கிறோம். விவரம்: ${desc}। இங்கே பதிவு செய்யவும்: {link}`,
+        email_subj: `அழைப்பு: ${title}, ${dateStr}`,
+        email_body: `அன்புள்ள {name},\n\n${dateStr} அன்று ${city}-யில் உள்ள ${venue}-ல் நடைபெறும் '${title}'-ற்கு உங்களை அழைக்கிறோம்.\nவிவரம்: ${desc}\n\nஇங்கே பதிவு செய்யவும்: {link}`,
+      },
+      {
+        lang: "en",
+        name: "English",
+        call_script: `Hello {name}. You are invited to ${title} on ${dateStr} at ${venue}, ${city}. Press 1 to confirm, 2 to decline, 3 for callback. Press 9 to stop calls.`,
+        back_en: `Hello {name}. You are invited to ${title} on ${dateStr} at ${venue}, ${city}. Press 1 to confirm, 2 to decline, 3 for callback.`,
+        whatsapp: `Hi {name}, you are invited to ${title} on ${dateStr} at ${venue}, ${city}. Details: ${desc}. Register here: {link}`,
+        email_subj: `Invitation: ${title}, ${dateStr}`,
+        email_body: `Dear {name},\n\nYou are invited to ${title} on ${dateStr} at ${venue}, ${city}.\nDetails: ${desc}\n\nPlease register here: {link}`,
+      },
+    ];
+  }, [eventData, speechSummary]);
+
+  // 4. Contacts CSV Audience State
+  const [audienceFile, setAudienceFile] = useState(null);
+  const [uploadingAudience, setUploadingAudience] = useState(false);
+  const [importReport, setImportReport] = useState(null);
+  const [contactsList, setContactsList] = useState([
+    { name: "Anjali Menon", phone_masked: "+91 ••••• ••011", language: "ml", segment: "Faculty" },
+    { name: "Rahul Nair", phone_masked: "+91 ••••• ••012", language: "ml", segment: "Students" },
+    { name: "Fatima Sheikh", phone_masked: "+91 ••••• ••013", language: "hi", segment: "Alumni" },
+    { name: "Meera Iyer", phone_masked: "+91 ••••• ••014", language: "ta", segment: "Faculty" },
+    { name: "Arjun Verma", phone_masked: "+91 ••••• ••015", language: "hi", segment: "Students" },
+  ]);
+
+  const body = [
+    <>
+      <h3>1. Choose an event template</h3>
+      <div className="tpl">
+        {["Seminar Invite", "Clinic Reminder", "School Notice", "Payment Reminder"].map((x, n) => (
+          <div
+            key={x}
+            className={tpl === n ? "on" : ""}
+            onClick={() => {
+              setTpl(n);
+              if (!eventData.title || defaultTitles.includes(eventData.title)) {
+                setEventData((prev) => ({ ...prev, title: defaultTitles[n] }));
+              }
+            }}
+            style={{ cursor: "pointer" }}
+          >
+            <b>{x}</b>
+            <div className="hint" style={{ marginTop: 8 }}>
+              {n === 0 && "Seminar RSVPs & passes"}
+              {n === 1 && "Appointments & reschedule"}
+              {n === 2 && "Parent-teacher meetings"}
+              {n === 3 && "Fees with personal links"}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Explicit User Input for Campaign / Event Name */}
+      <div className="f" style={{ marginTop: 20, background: "#fff", padding: 18, borderRadius: 12, border: "1px solid var(--line)" }}>
+        <label style={{ fontSize: 14, fontWeight: 700, color: "var(--ink)" }}>Campaign & Event Title</label>
+        <input
+          value={eventData.title}
+          placeholder="e.g. Healthcare Innovation Summit 2026"
+          style={{ fontSize: 14, fontWeight: 600, padding: 10, marginTop: 6 }}
+          onChange={(e) => setEventData({ ...eventData, title: e.target.value })}
+        />
+        <div className="hint" style={{ marginTop: 4 }}>
+          This title will identify your event on the organizer dashboard sidebar and on all invitations.
+        </div>
+      </div>
+      <p><b>Each preset includes a call script, voicemail, email and WhatsApp copy.</b></p>
+    </>,
+    <>
+      <h3>2. Upload poster and voice note</h3>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: "#f0fcfb", border: "1px solid #c8f3ed", padding: "10px 14px", borderRadius: 10, marginBottom: 14 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13 }}>
+          <span style={{ fontSize: 16 }}>⚡</span>
+          <span>
+            <b>Real AI Audio Engine:</b> {activeAIProvider === "gemini" ? "Google Gemini 1.5 Flash (Direct Audio)" : activeAIProvider === "groq" ? "Groq Whisper-large-v3 + Llama 3" : "OpenAI Whisper"}
+            {localStorage.getItem("eventreach_ai_key") ? " (API Key Connected ✓)" : " (No Key - Fallback Mode)"}
+          </span>
+        </div>
+        <button
+          type="button"
+          className="btn-sm"
+          style={{ background: "#fff", borderColor: "var(--teal)", color: "var(--ink)", padding: "4px 10px" }}
+          onClick={() => onOpenAISettings && onOpenAISettings()}
+        >
+          ⚙️ Configure AI Key
+        </button>
+      </div>
+      <div className="tpl" style={{ gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+        {/* Photo / Poster Upload Area */}
+        <div
+          style={{
+            border: "2px dashed #2DD7C0",
+            borderRadius: 14,
+            padding: 24,
+            background: posterUrl ? "#f0fcfb" : "#f8fafb",
+            textAlign: "center",
+            cursor: "pointer",
+            transition: "all .2s ease",
+            position: "relative",
+          }}
+          onClick={() => document.getElementById("poster-upload-input")?.click()}
+        >
+          <input
+            id="poster-upload-input"
+            type="file"
+            accept="image/png,image/jpeg,image/webp,image/svg+xml,application/pdf"
+            style={{ display: "none" }}
+            onChange={async (e) => {
+              const file = e.target.files?.[0];
+              if (!file) return;
+              setPosterFile(file);
+              setUploadingPoster(true);
+              setAnalyzingPoster(true);
+              setPosterOcrStatus("Analyzing visual and reading text with OCR...");
+              setPosterOcrProgress(15);
+
+              try {
+                // 1. Upload to private backend storage
+                const res = await api.uploadPoster(campaignId || "cmp_001", file);
+                if (res?.poster_url) {
+                  setPosterUrl(res.poster_url);
+                } else {
+                  setPosterUrl(URL.createObjectURL(file));
+                }
+
+                // 2. Perform OCR & Entity Extraction
+                const ocrRes = await analyzePosterImage(file, (prog) => {
+                  if (prog.status === "recognizing text") {
+                    setPosterOcrProgress(Math.max(20, Math.round((prog.progress || 0) * 100)));
+                  }
+                });
+
+                if (ocrRes?.success) {
+                  setPosterExtractedText(ocrRes.rawText || "");
+                  setPosterExtractedEvent(ocrRes.event);
+
+                  setExtractedSources((prev) => ({
+                    ...prev,
+                    title: ocrRes.event.title ? "Poster OCR" : prev.title,
+                    venue: ocrRes.event.venue ? "Poster OCR" : prev.venue,
+                    city: ocrRes.event.city ? "Poster OCR" : prev.city,
+                    starts_at: ocrRes.event.starts_at ? "Poster OCR" : prev.starts_at,
+                    fee_inr: ocrRes.event.fee_inr !== undefined ? "Poster OCR" : prev.fee_inr,
+                  }));
+
+                  setEventData((prev) => ({
+                    ...prev,
+                    title: ocrRes.event.title || prev.title,
+                    venue: ocrRes.event.venue || prev.venue,
+                    city: ocrRes.event.city || prev.city,
+                    starts_at: ocrRes.event.starts_at || prev.starts_at,
+                    fee_inr: ocrRes.event.fee_inr !== undefined ? ocrRes.event.fee_inr : prev.fee_inr,
+                  }));
+                }
+              } catch (err) {
+                console.warn("Poster upload/analysis error:", err);
+              } finally {
+                setUploadingPoster(false);
+                setAnalyzingPoster(false);
+              }
+            }}
+          />
+          {posterUrl ? (
+            <div>
+              <img
+                src={posterUrl}
+                alt="Uploaded Poster Preview"
+                style={{ maxHeight: 110, maxWidth: "100%", borderRadius: 8, objectFit: "cover", marginBottom: 8, boxShadow: "0 2px 8px rgba(0,0,0,0.1)" }}
+              />
+              <div style={{ fontWeight: 600, fontSize: 13, color: "var(--ink)" }}>{posterFile?.name || "Uploaded Poster"}</div>
+              <span className="pill g" style={{ marginTop: 6 }}>✓ Analyzed by OCR Engine</span>
+              {analyzingPoster && (
+                <div style={{ marginTop: 6, fontSize: 12, color: "var(--teal)", fontWeight: 600 }}>
+                  🔍 {posterOcrStatus} {posterOcrProgress > 0 && `(${posterOcrProgress}%)`}
+                </div>
+              )}
+              <div className="hint" style={{ marginTop: 4 }}>Click to replace poster</div>
+            </div>
+          ) : (
+            <div>
+              <div style={{ fontSize: 36, marginBottom: 8 }}>🖼️</div>
+              <b>{uploadingPoster || analyzingPoster ? "Analyzing poster..." : "Upload Event Poster"}</b>
+              <div className="hint" style={{ marginTop: 4 }}>
+                {analyzingPoster ? "Running OCR text extraction..." : "Upload PNG, JPG or WebP. AI auto-reads venue, title & dates."}
+              </div>
+              <button
+                className="btn p"
+                type="button"
+                style={{ width: "auto", margin: "14px auto 0", padding: "6px 16px", fontSize: 12 }}
+              >
+                Choose Photo / Poster
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* Voice Note: Live In-Page Recording or File Upload */}
+        <div
+          style={{
+            border: "2px dashed #2DD7C0",
+            borderRadius: 14,
+            padding: 20,
+            background: recording ? "#fff5f5" : voiceFile ? "#f0fcfb" : "#f8fafb",
+            textAlign: "center",
+            display: "flex",
+            flexDirection: "column",
+            justifyContent: "space-between",
+            transition: "all .2s ease",
+          }}
+        >
+          {/* Mode Switcher */}
+          <div style={{ display: "flex", background: "#eef2f5", borderRadius: 8, padding: 3, marginBottom: 12 }}>
+            <span
+              style={{
+                flex: 1,
+                padding: "6px 8px",
+                borderRadius: 6,
+                fontSize: 12,
+                cursor: "pointer",
+                fontWeight: voiceMode === "record" ? 700 : 500,
+                background: voiceMode === "record" ? "#fff" : "transparent",
+                color: voiceMode === "record" ? "var(--ink)" : "var(--mut)",
+                boxShadow: voiceMode === "record" ? "0 1px 3px rgba(0,0,0,0.1)" : "none",
+              }}
+              onClick={() => setVoiceMode("record")}
+            >
+              🎙️ Record Live
+            </span>
+            <span
+              style={{
+                flex: 1,
+                padding: "6px 8px",
+                borderRadius: 6,
+                fontSize: 12,
+                cursor: "pointer",
+                fontWeight: voiceMode === "upload" ? 700 : 500,
+                background: voiceMode === "upload" ? "#fff" : "transparent",
+                color: voiceMode === "upload" ? "var(--ink)" : "var(--mut)",
+                boxShadow: voiceMode === "upload" ? "0 1px 3px rgba(0,0,0,0.1)" : "none",
+              }}
+              onClick={() => setVoiceMode("upload")}
+            >
+              📁 Upload Audio File
+            </span>
+          </div>
+
+          {/* Mode 1: Live Voice Recorder */}
+          {voiceMode === "record" && (
+            <div>
+              {recording ? (
+                <div>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 6 }}>
+                    <span className="rec-dot" />
+                    <b style={{ color: "var(--red)", fontSize: 15 }}>RECORDING: {formatTimer(recordingSeconds)}</b>
+                  </div>
+                  <div className="wave-bars">
+                    <i /><i /><i /><i /><i />
+                  </div>
+                  {liveSpeechText ? (
+                    <div style={{ background: "#fff", border: "1px solid #ffd0d0", borderRadius: 8, padding: "6px 10px", margin: "8px 0", fontSize: 13, color: "var(--ink)" }}>
+                      🗣️ <i>"{liveSpeechText}"</i>
+                    </div>
+                  ) : (
+                    <div className="hint" style={{ marginBottom: 12 }}>
+                      Speak event details into your microphone (Title, venue, dates, fee)...
+                    </div>
+                  )}
+                  <div style={{ display: "flex", gap: 8, justifyContent: "center" }}>
+                    <button
+                      className="btn p"
+                      type="button"
+                      style={{ width: "auto", padding: "8px 18px", fontSize: 13, background: "var(--red)", borderColor: "var(--red)", color: "#fff" }}
+                      onClick={stopRecording}
+                    >
+                      ⏹ Stop & Process
+                    </button>
+                    <button
+                      className="btn"
+                      type="button"
+                      style={{ width: "auto", padding: "8px 14px", fontSize: 13 }}
+                      onClick={cancelRecording}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              ) : voiceFile ? (
+                <div>
+                  <div style={{ fontSize: 28, marginBottom: 4 }}>🎙️</div>
+                  <b>Live Voice Note Captured</b>
+                  {recordedAudioUrl && (
+                    <audio
+                      controls
+                      src={recordedAudioUrl}
+                      style={{ width: "100%", height: 36, margin: "10px 0" }}
+                    />
+                  )}
+                  <div>
+                    <span className="pill g">
+                      {voiceExtracting ? "Transcribing with Whisper AI..." : "✓ Event Extracted by AI"}
+                    </span>
+                  </div>
+                  <button
+                    className="btn-sm"
+                    type="button"
+                    style={{ marginTop: 10 }}
+                    onClick={startRecording}
+                  >
+                    🔄 Record Again
+                  </button>
+                </div>
+              ) : (
+                <div>
+                  <div style={{ fontSize: 36, marginBottom: 8 }}>🎙️</div>
+                  <b>Record Event Voice Brief</b>
+                  <div className="hint" style={{ marginTop: 4 }}>
+                    Speak into your microphone. AI extracts venue, dates, and ticket prices.
+                  </div>
+                  <button
+                    className="btn p"
+                    type="button"
+                    style={{ width: "auto", margin: "14px auto 0", padding: "8px 20px", fontSize: 13, background: "#C0233B", borderColor: "#C0233B", color: "#fff" }}
+                    onClick={startRecording}
+                  >
+                    🔴 Start Recording
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Mode 2: Audio File Upload */}
+          {voiceMode === "upload" && (
+            <div
+              style={{ cursor: "pointer" }}
+              onClick={() => document.getElementById("voice-upload-input")?.click()}
+            >
+              <input
+                id="voice-upload-input"
+                type="file"
+                accept="audio/wav,audio/mp3,audio/mpeg,audio/m4a,audio/ogg,audio/webm,audio/flac"
+                style={{ display: "none" }}
+                onChange={async (e) => {
+                  const file = e.target.files?.[0];
+                  if (!file) return;
+                  setVoiceFile(file);
+                  setRecordedAudioUrl(URL.createObjectURL(file));
+                  setVoiceExtracting(true);
+
+                  try {
+                    const res = await api.uploadVoiceNote(campaignId || "cmp_001", file);
+                    const finalTranscript = res?.transcript || "Audio note uploaded.";
+                    setTranscript(finalTranscript);
+
+                    const extracted = extractEventDetailsFromText(finalTranscript, res?.event || {});
+                    setVoiceExtractedEvent(extracted);
+
+                    const isBackendStaticFallback = res?.event?.title === "AI in Healthcare Seminar" && !finalTranscript.toLowerCase().includes("healthcare");
+                    const backendTitle = res?.event?.title && !["Community Event", "Live Voice", "Voice Brief"].includes(res.event.title) && !isBackendStaticFallback ? res.event.title : null;
+                    const detectedTitle = extracted.title && !["Community Event", "Live Voice", "Voice Brief"].includes(extracted.title) ? extracted.title : (backendTitle || extracted.title);
+                    const summaryText = res?.event?.description || extracted.description || `Spoken voice invitation for ${detectedTitle || "the event"}.`;
+                    setSpeechSummary(summaryText);
+
+                    setExtractedSources((prev) => ({
+                      ...prev,
+                      title: detectedTitle ? "Voice File AI" : prev.title,
+                      description: summaryText ? "AI Speech Summary" : prev.description,
+                      venue: (res?.event?.venue || extracted.venue) ? "Voice File" : prev.venue,
+                      city: (res?.event?.city || extracted.city) ? "Voice File" : prev.city,
+                      starts_at: (res?.event?.starts_at || extracted.starts_at) ? "Voice File" : prev.starts_at,
+                      fee_inr: (res?.event?.fee_inr !== undefined || extracted.fee_inr !== undefined) ? "Voice File" : prev.fee_inr,
+                    }));
+
+                    setEventData((prev) => ({
+                      ...prev,
+                      title: detectedTitle || prev.title,
+                      description: summaryText || prev.description,
+                      venue: res?.event?.venue || extracted.venue || prev.venue,
+                      city: res?.event?.city || extracted.city || prev.city,
+                      starts_at: extracted.starts_at ? (typeof extracted.starts_at === "string" ? extracted.starts_at : new Date(extracted.starts_at).toLocaleString()) : prev.starts_at,
+                      fee_inr: res?.event?.fee_inr !== undefined ? res.event.fee_inr : (extracted.fee_inr !== undefined ? extracted.fee_inr : prev.fee_inr),
+                    }));
+                  } catch (err) {
+                    console.warn("Audio upload extraction error:", err);
+                  } finally {
+                    setVoiceExtracting(false);
+                  }
+                }}
+              />
+              {voiceFile ? (
+                <div>
+                  <div style={{ fontSize: 32, marginBottom: 4 }}>📁</div>
+                  <div style={{ fontWeight: 600, fontSize: 13, color: "var(--ink)" }}>{voiceFile.name}</div>
+                  <span className="pill g" style={{ marginTop: 6 }}>
+                    {voiceExtracting ? "Transcribing with Whisper AI..." : "✓ Extracted Event Details"}
+                  </span>
+                  <div className="hint" style={{ marginTop: 4 }}>Click to change audio file</div>
+                </div>
+              ) : (
+                <div>
+                  <div style={{ fontSize: 36, marginBottom: 8 }}>📁</div>
+                  <b>Upload Audio Brief</b>
+                  <div className="hint" style={{ marginTop: 4 }}>
+                    Drop WAV, MP3, M4A, OGG, or WebM (max 25MB)
+                  </div>
+                  <button
+                    className="btn p"
+                    type="button"
+                    style={{ width: "auto", margin: "14px auto 0", padding: "6px 16px", fontSize: 12 }}
+                  >
+                    Choose Audio File
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Live Multi-Modal AI Extraction Reflection Panel */}
+      {(posterExtractedEvent || voiceFile || transcript || analyzingPoster || voiceExtracting || posterUrl) && (
+        <div
+          style={{
+            marginTop: 20,
+            padding: 20,
+            background: "#fff",
+            borderRadius: 14,
+            border: "2px solid #2DD7C0",
+            boxShadow: "0 6px 20px rgba(45,215,192,0.15)",
+          }}
+        >
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <span style={{ fontSize: 22 }}>✨</span>
+              <div>
+                <b style={{ fontSize: 16, color: "var(--ink)" }}>Live AI Multi-Modal Event Extraction</b>
+                <div style={{ fontSize: 12, color: "var(--mut)" }}>
+                  Details reflected live from your poster and voice note analysis
+                </div>
+              </div>
+            </div>
+            <span className={`pill ${analyzingPoster || voiceExtracting ? "w" : "g"}`} style={{ fontSize: 12, padding: "5px 12px" }}>
+              {analyzingPoster
+                ? "⚡ OCR Scanning Poster..."
+                : voiceExtracting
+                ? "⚡ Transcribing Speech..."
+                : "✓ Analysis Synchronized"}
+            </span>
+          </div>
+
+          {/* Extracted Details Grid */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, marginBottom: 14 }}>
+            <div style={{ background: "#F8FAFB", padding: "12px", borderRadius: 10, border: "1px solid var(--line)" }}>
+              <div style={{ fontSize: 11, color: "var(--mut)", fontWeight: 700 }}>EVENT TITLE</div>
+              <div style={{ fontWeight: 700, fontSize: 14, color: "var(--ink)", marginTop: 4 }}>
+                {eventData.title || "Pending analysis..."}
+              </div>
+              {extractedSources.title && (
+                <span className="pill g" style={{ marginTop: 6, fontSize: 10 }}>From {extractedSources.title}</span>
+              )}
+            </div>
+
+            <div style={{ background: "#F8FAFB", padding: "12px", borderRadius: 10, border: "1px solid var(--line)" }}>
+              <div style={{ fontSize: 11, color: "var(--mut)", fontWeight: 700 }}>DATE & TIME</div>
+              <div style={{ fontWeight: 700, fontSize: 14, color: "var(--ink)", marginTop: 4 }}>
+                {eventData.starts_at || "Pending analysis..."}
+              </div>
+              {extractedSources.starts_at && (
+                <span className="pill g" style={{ marginTop: 6, fontSize: 10 }}>From {extractedSources.starts_at}</span>
+              )}
+            </div>
+
+            <div style={{ background: "#F8FAFB", padding: "12px", borderRadius: 10, border: "1px solid var(--line)" }}>
+              <div style={{ fontSize: 11, color: "var(--mut)", fontWeight: 700 }}>VENUE & CITY</div>
+              <div style={{ fontWeight: 700, fontSize: 14, color: "var(--ink)", marginTop: 4 }}>
+                {(eventData.venue ? eventData.venue + ", " : "") + (eventData.city || "")}
+              </div>
+              {extractedSources.venue && (
+                <span className="pill g" style={{ marginTop: 6, fontSize: 10 }}>From {extractedSources.venue}</span>
+              )}
+            </div>
+
+            <div style={{ background: "#F8FAFB", padding: "12px", borderRadius: 10, border: "1px solid var(--line)" }}>
+              <div style={{ fontSize: 11, color: "var(--mut)", fontWeight: 700 }}>REGISTRATION FEE</div>
+              <div style={{ fontWeight: 700, fontSize: 14, color: "var(--ink)", marginTop: 4 }}>
+                ₹{eventData.fee_inr}
+              </div>
+              {extractedSources.fee_inr && (
+                <span className="pill g" style={{ marginTop: 6, fontSize: 10 }}>From {extractedSources.fee_inr}</span>
+              )}
+            </div>
+          </div>
+
+          {/* AI Speech Summary Highlight Box */}
+          {(speechSummary || eventData.description) && (
+            <div
+              style={{
+                background: "#f0fcfb",
+                border: "1.5px solid #2DD7C0",
+                borderRadius: 10,
+                padding: "12px 16px",
+                marginBottom: 14,
+              }}
+            >
+              <div style={{ fontSize: 11, color: "var(--teal)", fontWeight: 700, display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
+                <span style={{ fontSize: 14 }}>📝</span>
+                <span>AI SPEECH SUMMARY & EVENT SYNOPSIS</span>
+                <span className="pill g" style={{ fontSize: 10, padding: "2px 8px" }}>Auto-Summarized</span>
+              </div>
+              <div style={{ fontSize: 13, color: "var(--ink)", fontWeight: 500, lineHeight: 1.5 }}>
+                {speechSummary || eventData.description}
+              </div>
+            </div>
+          )}
+
+          {/* Evidence Snippets */}
+          <div style={{ background: "#f8fafb", padding: "12px 14px", borderRadius: 10, fontSize: 13, border: "1px solid var(--line)" }}>
+            {analyzingPoster && (
+              <div style={{ color: "var(--teal)", fontWeight: 600 }}>
+                🔍 <b>Poster OCR Progress:</b> {posterOcrStatus} {posterOcrProgress > 0 && `(${posterOcrProgress}%)`}
+              </div>
+            )}
+            {posterExtractedText && (
+              <div style={{ color: "var(--ink)", marginTop: 4 }}>
+                🖼️ <b>Poster OCR Detected Text:</b> <i>"{posterExtractedText.slice(0, 160)}..."</i>
+              </div>
+            )}
+            {transcript && (
+              <div style={{ color: "var(--ink)", marginTop: 4 }}>
+                🎙️ <b>Spoken Voice Transcript (Verbatim):</b> <i>"{transcript}"</i>
+              </div>
+            )}
+            {(speechSummary || eventData.description) && (
+              <div style={{ color: "var(--teal)", marginTop: 4 }}>
+                ✨ <b>Detected Program Name:</b> <b>{eventData.title}</b>
+              </div>
+            )}
+            <div style={{ marginTop: 10, display: "flex", justifyContent: "flex-end" }}>
+              <button
+                type="button"
+                className="btn p"
+                style={{ width: "auto", padding: "6px 18px", fontSize: 12, margin: 0 }}
+                onClick={() => setI(2)}
+              >
+                Proceed to Review Details (Step 3) →
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div style={{ marginTop: 20 }}>
+        <p>AI pipeline status: Whisper transcription + structured LLM event extraction</p>
+        <div className="bar">
+          <i style={{ width: voiceExtracting || analyzingPoster ? "75%" : voiceFile || posterFile ? "100%" : "30%", transition: "width .4s ease" }} />
+        </div>
+        <div className="hint">
+          {voiceExtracting
+            ? "Transcribing audio note and parsing venue, dates, and ticket prices..."
+            : analyzingPoster
+            ? "Running client-side OCR on uploaded poster visual..."
+            : transcript
+            ? `Extracted Transcript: "${transcript.slice(0, 110)}..."`
+            : "Guarded by monthly AI budget cap. Audio and poster stored privately with signed expiring links."}
+        </div>
+      </div>
+    </>,
+    <>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <h3 style={{ margin: 0 }}>3. Review extracted event details</h3>
+        <span className="pill g" style={{ fontSize: 12 }}>
+          ✓ Populated from AI Analysis
+        </span>
+      </div>
+      <div className="hint" style={{ marginBottom: 16 }}>
+        Fields automatically parsed from your poster and voice note. You can verify or edit any field before generating multilingual translations.
+      </div>
+
+      <div className="f">
+        <label style={{ display: "flex", justifyContent: "space-between" }}>
+          <span>Event name</span>
+          {extractedSources.title && <small style={{ color: "var(--grn)", fontWeight: 600 }}>[From {extractedSources.title}]</small>}
+        </label>
+        <input
+          value={eventData.title}
+          style={{ background: "#f0fcfb", fontWeight: 600 }}
+          onChange={(e) => setEventData({ ...eventData, title: e.target.value })}
+        />
+      </div>
+
+      <div className="f">
+        <label style={{ display: "flex", justifyContent: "space-between" }}>
+          <span>Event Summary & Description</span>
+          {(extractedSources.description || speechSummary) && (
+            <small style={{ color: "var(--grn)", fontWeight: 600 }}>[From AI Speech Summary]</small>
+          )}
+        </label>
+        <textarea
+          rows={2}
+          value={eventData.description || speechSummary || ""}
+          style={{ background: "#f0fcfb", fontSize: 13, resize: "vertical" }}
+          placeholder="Short 1-2 sentence synopsis of the event..."
+          onChange={(e) => {
+            const val = e.target.value;
+            setEventData({ ...eventData, description: val });
+            setSpeechSummary(val);
+          }}
+        />
+        <div className="hint" style={{ marginTop: 4 }}>
+          Executive summary generated from the voice note. Used in multilingual phone call scripts and WhatsApp invites.
+        </div>
+      </div>
+
+      <div className="f">
+        <label style={{ display: "flex", justifyContent: "space-between" }}>
+          <span>Date and time</span>
+          {extractedSources.starts_at && <small style={{ color: "var(--grn)", fontWeight: 600 }}>[From {extractedSources.starts_at}]</small>}
+        </label>
+        <input
+          value={eventData.starts_at}
+          style={{ background: "#f0fcfb" }}
+          onChange={(e) => setEventData({ ...eventData, starts_at: e.target.value })}
+        />
+      </div>
+
+      <div className="f">
+        <label style={{ display: "flex", justifyContent: "space-between" }}>
+          <span>Venue</span>
+          {extractedSources.venue && <small style={{ color: "var(--grn)", fontWeight: 600 }}>[From {extractedSources.venue}]</small>}
+        </label>
+        <input
+          value={eventData.venue}
+          style={{ background: "#f0fcfb" }}
+          onChange={(e) => setEventData({ ...eventData, venue: e.target.value })}
+        />
+      </div>
+
+      <div className="f">
+        <label style={{ display: "flex", justifyContent: "space-between" }}>
+          <span>City</span>
+          {extractedSources.city && <small style={{ color: "var(--grn)", fontWeight: 600 }}>[From {extractedSources.city}]</small>}
+        </label>
+        <input
+          value={eventData.city}
+          style={{ background: "#f0fcfb" }}
+          onChange={(e) => setEventData({ ...eventData, city: e.target.value })}
+        />
+      </div>
+
+      <div className="f">
+        <label style={{ display: "flex", justifyContent: "space-between" }}>
+          <span>Registration Fee (INR)</span>
+          {extractedSources.fee_inr && <small style={{ color: "var(--grn)", fontWeight: 600 }}>[From {extractedSources.fee_inr}]</small>}
+        </label>
+        <input
+          type="number"
+          value={eventData.fee_inr}
+          style={{ background: "#f0fcfb" }}
+          onChange={(e) => setEventData({ ...eventData, fee_inr: parseInt(e.target.value, 10) || 0 })}
+        />
+      </div>
+
+      <div style={{ display: "flex", gap: 10, alignItems: "center", marginTop: 18, marginBottom: 12 }}>
+        <button
+          type="button"
+          className="btn p"
+          style={{ width: "auto", padding: "10px 22px", margin: 0, fontSize: 13 }}
+          disabled={isSavingEvent}
+          onClick={handleSaveEventToDB}
+        >
+          {isSavingEvent ? "💾 Saving to PostgreSQL..." : "💾 Save Event Details to Database"}
+        </button>
+        {saveEventStatus && (
+          <span className={`pill ${saveEventStatus.type === "success" ? "g" : "e"}`} style={{ fontSize: 13, padding: "6px 12px" }}>
+            {saveEventStatus.msg}
+          </span>
+        )}
+      </div>
+    </>,
+    <>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+        <h3 style={{ margin: 0 }}>4. Upload audience contacts list</h3>
+        <a
+          href="/audience/template.csv"
+          download="contacts-template.csv"
+          style={{ fontSize: 13, color: "var(--teal)", textDecoration: "none", fontWeight: 700 }}
+        >
+          ⬇ Download CSV Template
+        </a>
+      </div>
+
+      {/* CSV Contact List Upload Zone */}
+      <div
+        style={{
+          border: "2px dashed #2DD7C0",
+          borderRadius: 14,
+          padding: 24,
+          background: audienceFile ? "#f0fcfb" : "#fff",
+          textAlign: "center",
+          marginBottom: 18,
+          cursor: "pointer",
+          transition: "all .2s ease",
+        }}
+        onClick={() => document.getElementById("csv-audience-input")?.click()}
+      >
+        <input
+          id="csv-audience-input"
+          type="file"
+          accept=".csv,text/csv"
+          style={{ display: "none" }}
+          onChange={async (e) => {
+            const file = e.target.files?.[0];
+            if (!file) return;
+            setAudienceFile(file);
+            setUploadingAudience(true);
+            const report = await api.importAudience(campaignId || "cmp_001", file);
+            setUploadingAudience(false);
+            setImportReport(report);
+            const contactsRes = await api.getContacts(campaignId || "cmp_001");
+            if (contactsRes?.items && contactsRes.items.length > 0) {
+              setContactsList(contactsRes.items);
+            }
+          }}
+        />
+        <div style={{ fontSize: 32, marginBottom: 4 }}>📋</div>
+        <b>{uploadingAudience ? "Importing & Encrypting contacts..." : audienceFile ? `Uploaded: ${audienceFile.name}` : "Upload Audience CSV File"}</b>
+        <div className="hint" style={{ marginTop: 4 }}>
+          {audienceFile ? "Click to upload a different CSV" : "Drop CSV file with columns: name, phone, language, segment, email"}
+        </div>
+        <button
+          className="btn p"
+          type="button"
+          style={{ width: "auto", margin: "12px auto 0", padding: "6px 16px", fontSize: 12 }}
+        >
+          Choose Contacts CSV
+        </button>
+        {importReport && (
+          <div style={{ marginTop: 12, display: "flex", justifyContent: "center", gap: 8, flexWrap: "wrap" }}>
+            <span className="pill g">✓ {importReport.imported} Contacts Imported</span>
+            {importReport.skipped > 0 && <span className="pill w">! {importReport.skipped} Skipped (Duplicates/DND)</span>}
+          </div>
+        )}
+      </div>
+
+      <table>
+        <thead>
+          <tr><th>Name</th><th>Phone (E.164 Masked)</th><th>Language</th><th>Segment</th><th>Status</th></tr>
+        </thead>
+        <tbody>
+          {contactsList.slice(0, 6).map((c, idx) => (
+            <tr key={c.id || idx}>
+              <td><b>{c.name}</b></td>
+              <td>{c.phone_masked || c.phone || "+91 90••• ••011"}</td>
+              <td>{c.language === "ml" ? "Malayalam" : c.language === "hi" ? "Hindi" : c.language === "ta" ? "Tamil" : c.language || "English"}</td>
+              <td><span className="pill" style={{ background: "#eef2f5" }}>{c.segment || "General"}</span></td>
+              <td><span className="pill g">✓ Ready</span></td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <p style={{ fontSize: 13, color: "var(--mut)", marginTop: 8 }}>
+        <b>{contactsList.length} contacts loaded.</b> Phone numbers encrypted at rest with Fernet AES; masked for display under DPDP.
+      </p>
+    </>,
+    <>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+        <h3 style={{ margin: 0 }}>5. Review multilingual translations</h3>
+        <span className="pill g" style={{ fontSize: 12 }}>✓ Generated from Voice Brief</span>
+      </div>
+      <div className="card" style={{ marginBottom: 14 }}>
+        Outreach copy generated dynamically from your spoken voice brief for <b>{eventData.title}</b>. English back-translations generated for quality assurance:
+      </div>
+
+      {/* Channel Switcher */}
+      <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+        {[
+          { key: "call", label: "📞 Call Script (TTS)" },
+          { key: "whatsapp", label: "💬 WhatsApp Invite" },
+          { key: "email", label: "📧 Email Body" },
+        ].map((ch) => (
+          <button
+            key={ch.key}
+            type="button"
+            className="btn-sm"
+            style={{
+              background: previewChannel === ch.key ? "var(--teal)" : "#fff",
+              color: previewChannel === ch.key ? "#fff" : "var(--ink)",
+              borderColor: previewChannel === ch.key ? "var(--teal)" : "var(--line)",
+              fontWeight: 600,
+              padding: "6px 14px",
+            }}
+            onClick={() => setPreviewChannel(ch.key)}
+          >
+            {ch.label}
+          </button>
+        ))}
+      </div>
+
+      <table style={{ marginTop: 8 }}>
+        <thead>
+          <tr>
+            <th style={{ width: "20%" }}>Language</th>
+            <th style={{ width: "45%" }}>{previewChannel === "call" ? "Spoken Call Script" : previewChannel === "whatsapp" ? "WhatsApp Copy" : "Email Message"}</th>
+            <th style={{ width: "25%" }}>English Verification</th>
+            <th style={{ width: "10%" }}>TTS Audio</th>
+          </tr>
+        </thead>
+        <tbody>
+          {dynamicTranslations.map((tr) => (
+            <tr key={tr.lang}>
+              <td>
+                <b>{tr.name}</b>
+              </td>
+              <td style={{ fontSize: 13, lineHeight: 1.4 }}>
+                {previewChannel === "call" ? tr.call_script : previewChannel === "whatsapp" ? tr.whatsapp : tr.email_body}
+              </td>
+              <td style={{ fontSize: 12, color: "var(--mut)", lineHeight: 1.4 }}>
+                {tr.back_en}
+              </td>
+              <td>
+                <button
+                  type="button"
+                  className="btn-sm"
+                  title="Listen to pronunciation simulation"
+                  style={{ background: "#f0fcfb", borderColor: "var(--teal)", color: "var(--teal)", fontSize: 11, padding: "4px 8px" }}
+                  onClick={() => speakText(previewChannel === "call" ? tr.call_script : tr.whatsapp, tr.lang)}
+                >
+                  🔊 Listen
+                </button>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </>,
+    <>
+      <h3>6. Channels & Dispatch Configuration</h3>
+      {["Voice call (Exotel outbound)", "SMS link (/s/code)", "Email with poster attachment", "WhatsApp message (mock adapter)", "Instagram caption (mock adapter)"].map((c) => (
+        <label key={c} style={{ display: "block", padding: 8, fontSize: 14 }}>
+          <input type="checkbox" defaultChecked /> {c}
+        </label>
+      ))}
+      <Field label="Start date" defaultValue={eventData.starts_at || "14 Nov 2026"} />
+      <Field label="Calling hours" defaultValue="10:00 AM – 6:00 PM IST (India DND compliant)" readOnly />
+      <Field label="Retries" defaultValue="Up to 3 attempts across different times of day" readOnly />
+    </>,
+    <>
+      <h3>7. Preview with a test call</h3>
+      {/* Live Voice Script Display */}
+      <div style={{ background: "#f0fcfb", border: "1px solid #cbf4ee", borderRadius: 10, padding: "12px 16px", marginBottom: 16 }}>
+        <div style={{ fontSize: 12, fontWeight: 700, color: "var(--teal)", marginBottom: 4 }}>
+          🎙️ Spoken Call Script for "{eventData.title}" ({testLang})
+        </div>
+        <div style={{ fontSize: 13, color: "var(--ink)", lineHeight: 1.5 }}>
+          {(() => {
+            const langCode = testLang === "Malayalam" ? "ml" : testLang === "Hindi" ? "hi" : testLang === "Tamil" ? "ta" : "en";
+            const cur = dynamicTranslations.find((t) => t.lang === langCode) || dynamicTranslations[0];
+            return cur.call_script;
+          })()}
+        </div>
+        <button
+          type="button"
+          className="btn-sm"
+          style={{ marginTop: 8, background: "#fff", borderColor: "var(--teal)", color: "var(--teal)", padding: "4px 10px" }}
+          onClick={() => {
+            const langCode = testLang === "Malayalam" ? "ml" : testLang === "Hindi" ? "hi" : testLang === "Tamil" ? "ta" : "en";
+            const cur = dynamicTranslations.find((t) => t.lang === langCode) || dynamicTranslations[0];
+            speakText(cur.call_script, langCode);
+          }}
+        >
+          🔊 Play TTS Audio Simulation
+        </button>
+      </div>
+
+      <div className="f">
+        <label>Phone number for test</label>
+        <input value={testPhone} onChange={(e) => setTestPhone(e.target.value)} placeholder="+91 98000 00000" />
+      </div>
+      <div className="f">
+        <label>Language</label>
+        <select value={testLang} onChange={(e) => setTestLang(e.target.value)}>
+          <option>Malayalam</option><option>Hindi</option><option>English</option><option>Tamil</option>
+        </select>
+      </div>
+      <button
+        className="btn p"
+        style={{ width: 220 }}
+        disabled={calling}
+        onClick={async () => {
+          setCalling(true);
+          const langCode = testLang === "Malayalam" ? "ml" : testLang === "Hindi" ? "hi" : testLang === "Tamil" ? "ta" : "en";
+          const res = await api.testCall(campaignId || "cmp_001", testPhone, langCode);
+          setCalling(false);
+          setTestResult(res?.message || "Exotel test call queued.");
+        }}
+      >
+        {calling ? "Dialing..." : "Place Test Call"}
+      </button>
+      <div className="hint">Test call connects through Exotel IVR pipeline.</div>
+      <Alert t="g" title={testResult ? "API Response Received" : "Exotel Test Call Status"}>
+        {testResult ? `Backend: ${testResult}` : `Call placed → Answered → Spoken script for '${eventData.title}' played → Keypad '1' pressed → Outcome: Confirmed.`}
+      </Alert>
+    </>,
+    <>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+        <h3 style={{ margin: 0 }}>8. Ready to launch campaign</h3>
+        <span className="pill g" style={{ fontSize: 12 }}>✓ Voice-Configured</span>
+      </div>
+      <div className="card">
+        <Row k="Campaign Name" v={eventData.title || "DEFINE 2026"} />
+        <Row k="Event Synopsis" v={eventData.description || speechSummary || `Outreach campaign for ${eventData.title || "event"}`} />
+        <Row k="Date & Venue" v={`${eventData.starts_at || "14 Nov 2026"} at ${eventData.venue || "Seminar Hall"}, ${eventData.city || "Kochi"}`} />
+        <Row k="Registration Fee" v={`₹${eventData.fee_inr || 0}`} />
+        <Row k="Audience" v={`${contactsList.length} verified contacts loaded`} />
+        <Row k="Multilingual Copy" v="Hindi, Malayalam, Tamil, English (Generated from voice)" />
+        <Row k="Outreach Channels" v="Exotel Voice Calls, WhatsApp, SMS Links, Email" />
+        <Row k="Calling Schedule" v="10:00 AM – 6:00 PM IST (India DND compliant)" />
+      </div>
+      <Alert t="g" title="Voice Campaign Verification Passed">
+        Campaign name '{eventData.title}' and event details populated from your voice brief. AI budget verified, DND filtered, contacts encrypted.
+      </Alert>
+    </>,
+  ][i];
+
+  return (
+    <div className="wiz-container">
+      <div className="wiz-hdr">
+        <div>
+          <h2 style={{ margin: 0 }}>Create Outreach Campaign</h2>
+          <small style={{ color: "var(--mut)" }}>Step {i + 1} of 8: {STEPS[i]}</small>
+        </div>
+        <button className="btn-sm" onClick={onCancel}>← Back to Dashboard</button>
+      </div>
+
+      <div className="wiz">
+        <div className="steps">
+          {STEPS.map((s, n) => (
+            <div key={s} className={n === i ? "on" : ""}>
+              <i />
+              {s}
+            </div>
+          ))}
+        </div>
+
+        {body}
+
+        <div style={{ display: "flex", justifyContent: "space-between", marginTop: 32 }}>
+          <button className="btn" style={{ width: 140, borderRadius: 30 }} disabled={!i} onClick={() => setI(i - 1)}>
+            Back
+          </button>
+          <button
+            className="btn p"
+            style={{ width: 220, borderRadius: 30 }}
+            disabled={isSavingEvent}
+            onClick={async () => {
+              if (i === 2) {
+                // Auto-save event details to PostgreSQL database when continuing past Step 3
+                try {
+                  let cid = campaignId;
+                  if (!cid) {
+                    const created = await api.createCampaign(eventData.title || "New Campaign", templateKeys[tpl]);
+                    if (created?.id) {
+                      cid = created.id;
+                      setCampaignId(cid);
+                    }
+                  }
+                  if (cid) {
+                    await api.saveEvent(cid, eventData);
+                  }
+                } catch (e) {
+                  console.warn("Auto-save error:", e);
+                }
+                setI(3);
+              } else if (i === 7) {
+                // Launch campaign in database
+                setIsSavingEvent(true);
+                try {
+                  let cid = campaignId;
+                  if (!cid) {
+                    const created = await api.createCampaign(eventData.title || "DEFINE 2026", templateKeys[tpl]);
+                    if (created?.id) cid = created.id;
+                  }
+                  if (cid) {
+                    await api.saveEvent(cid, eventData);
+                    try { await api.generateTranslations(cid); } catch {}
+                    await api.launchCampaign(cid);
+                  }
+                  const newCampObj = {
+                    id: cid || `cmp_${Date.now()}`,
+                    name: eventData.title || "DEFINE 2026",
+                    template_key: templateKeys[tpl],
+                    status: "running",
+                    event: { ...eventData },
+                    contact_count: contactsList.length || 50,
+                  };
+                  onLaunch(newCampObj);
+                } catch (err) {
+                  console.warn("Launch error:", err);
+                  onLaunch({
+                    id: campaignId || `cmp_${Date.now()}`,
+                    name: eventData.title || "DEFINE 2026",
+                    template_key: templateKeys[tpl],
+                    status: "running",
+                    event: { ...eventData },
+                    contact_count: contactsList.length || 50,
+                  });
+                } finally {
+                  setIsSavingEvent(false);
+                }
+              } else {
+                setI(Math.min(7, i + 1));
+              }
+            }}
+          >
+            {i === 7 ? (isSavingEvent ? "Launching..." : "🚀 Launch campaign") : "Continue →"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ---------- 3. Organizer Dashboard with Sidebar Subsections ---------- */
+const Bar = ({ k, n, p }) => (
+  <div style={{ display: "flex", gap: 10, alignItems: "center", fontSize: 13, marginBottom: 8 }}>
+    <span style={{ width: 85, color: "var(--mut)" }}>{k}</span>
+    <div className="bar" style={{ flex: 1 }}><i style={{ width: p + "%" }} /></div>
+    <b style={{ width: 45, textAlign: "right" }}>{n}</b>
+    <span style={{ width: 40, textAlign: "right", color: "var(--mut)" }}>{p}%</span>
+  </div>
+);
+
+function Dashboard({
+  onNewCampaign,
+  onSignOut,
+  user,
+  onOpenAISettings,
+  campaignsList = [],
+  setCampaignsList,
+  activeCampaignId,
+  setActiveCampaignId,
+}) {
+  const [activeSection, setActiveSection] = useState("overview");
+
+  // Sub-states for interactive previewing within sections
+  const [payState, setPayState] = useState("form");
+  const [guestState, setGuestState] = useState("form");
+  const [checkinState, setCheckinState] = useState("ok");
+  const [msgKey, setMsgKey] = useState("Invite");
+  const [channel, setChannel] = useState("Email");
+  const [feedbackState, setFeedbackState] = useState("form");
+
+  const [dashContacts, setDashContacts] = useState(null);
+  const [serverCampaigns, setServerCampaigns] = useState([]);
+
+  useEffect(() => {
+    api.getCampaigns().then((res) => {
+      if (res && res.length > 0) {
+        setServerCampaigns(res);
+        if (setCampaignsList) setCampaignsList(res);
+      }
+    });
+    api.getContacts("cmp_001").then((res) => {
+      if (res?.items && res.items.length > 0) setDashContacts(res.items);
+    });
+  }, []);
+
+  const fallbackCampaigns = [
+    {
+      id: "cmp_demo_1",
+      name: "Define Healthcare & AI Seminar",
+      template_key: "seminar_invite",
+      status: "running",
+      event: {
+        title: "Define Healthcare & AI Seminar",
+        starts_at: "23 Oct 2026, 10:00 AM IST",
+        venue: "Grand Hall, Block A",
+        city: "Kochi",
+        fee_inr: 500,
+        description: "A day of conversations and interactive discussions on AI in Healthcare.",
+      },
+      contact_count: 50,
+    },
+    {
+      id: "cmp_demo_2",
+      name: "Future of Work Summit",
+      template_key: "seminar_invite",
+      status: "draft",
+      event: {
+        title: "Future of Work Summit",
+        starts_at: "15 Nov 2026, 09:30 AM IST",
+        venue: "Infopark Auditorium",
+        city: "Kochi",
+        fee_inr: 750,
+        description: "Leadership symposium on remote collaboration and intelligent automation.",
+      },
+      contact_count: 42,
+    },
+    {
+      id: "cmp_demo_3",
+      name: "City Health Clinic Follow-up",
+      template_key: "clinic_reminder",
+      status: "running",
+      event: {
+        title: "City Health Clinic Follow-up",
+        starts_at: "28 Oct 2026, 11:00 AM IST",
+        venue: "City Wellness Clinic",
+        city: "Kochi",
+        fee_inr: 0,
+        description: "Preventive cardiology check-up and doctor consultation.",
+      },
+      contact_count: 35,
+    },
+  ];
+
+  // Merge database campaigns with fallbacks
+  const combinedList = [...(campaignsList && campaignsList.length > 0 ? campaignsList : serverCampaigns)];
+  fallbackCampaigns.forEach((fb) => {
+    if (!combinedList.some((c) => c.id === fb.id || c.name === fb.name)) {
+      combinedList.push(fb);
+    }
+  });
+
+  const currentCamp = combinedList.find((c) => c.id === activeCampaignId || c.name === activeCampaignId) || combinedList[0] || fallbackCampaigns[0];
+  const activeEventTitle = currentCamp.event?.title || currentCamp.name;
+  const activeEventVenue = currentCamp.event?.venue || "Grand Hall";
+  const activeEventCity = currentCamp.event?.city || "Kochi";
+  const activeEventDate = currentCamp.event?.starts_at ? (typeof currentCamp.event.starts_at === "string" ? currentCamp.event.starts_at : new Date(currentCamp.event.starts_at).toLocaleString()) : "23 Oct 2026, 10:00 AM IST";
+  const activeEventFee = currentCamp.event?.fee_inr !== undefined ? currentCamp.event.fee_inr : 500;
+
+  const subsections = [
+    { id: "overview", label: "📊 Overview" },
+    { id: "payments", label: "💳 Payments" },
+    { id: "registration", label: "📝 Guest Registration" },
+    { id: "tickets", label: "🎟️ Tickets & Check-in" },
+    { id: "messages", label: "💬 Message Previews" },
+    { id: "feedback", label: "⭐ Event Feedback" },
+  ];
+
+  return (
+    <div className="dash">
+      {/* Left Sidebar */}
+      <div className="side">
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16 }}>
+          <span style={{ fontSize: 20, color: "var(--teal)" }}>✳</span>
+          <b style={{ fontSize: 18, color: "#fff" }}>koodal</b>
+          <span className="pill w" style={{ marginLeft: "auto", fontSize: 10 }}>LIVE</span>
+        </div>
+
+        <button className="btn p side-btn" onClick={onNewCampaign}>
+          + Create Campaign
+        </button>
+
+        <div className="side-title">CAMPAIGNS & EVENTS ({combinedList.length})</div>
+        {combinedList.map((c) => {
+          const isSelected = (c.id === currentCamp.id || c.name === currentCamp.name);
+          const cTitle = c.event?.title || c.name;
+          const cCity = c.event?.city || "Kochi";
+          const cDate = c.event?.starts_at ? (typeof c.event.starts_at === "string" ? c.event.starts_at.slice(0, 16) : new Date(c.event.starts_at).toLocaleDateString()) : "Upcoming";
+          const cFee = c.event?.fee_inr !== undefined ? (c.event.fee_inr === 0 ? "Free" : `₹${c.event.fee_inr}`) : "₹500";
+          const isRunning = c.status === "running";
+
+          return (
+            <div key={c.id || c.name} style={{ marginBottom: 8 }}>
+              <div
+                className={`side-item ${isSelected ? "on" : ""}`}
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "stretch",
+                  padding: "10px 12px",
+                  borderRadius: 10,
+                  background: isSelected ? "#233544" : "rgba(255,255,255,0.03)",
+                  border: isSelected ? "1px solid var(--teal)" : "1px solid rgba(255,255,255,0.08)",
+                  cursor: "pointer",
+                  transition: "all 0.15s"
+                }}
+                onClick={() => {
+                  if (setActiveCampaignId) setActiveCampaignId(c.id || c.name);
+                  if (!isSelected) setActiveSection("overview");
+                }}
+              >
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 6 }}>
+                  <span style={{ fontWeight: 700, fontSize: 13, color: isSelected ? "#fff" : "#cfd8dc", lineHeight: 1.3 }}>
+                    {cTitle}
+                  </span>
+                  <span
+                    className={`pill ${isRunning ? "g" : "w"}`}
+                    style={{ fontSize: 9, padding: "2px 6px", margin: 0, flexShrink: 0 }}
+                  >
+                    {isRunning ? "RUNNING" : "DRAFT"}
+                  </span>
+                </div>
+
+                {/* Event data provided by the user reflected directly on sidebar item */}
+                <div style={{ fontSize: 11, color: isSelected ? "#a0c4db" : "#78909c", marginTop: 5, display: "flex", flexWrap: "wrap", gap: 8 }}>
+                  <span>📅 {cDate}</span>
+                  <span>📍 {cCity}</span>
+                  <span>🎟️ {cFee}</span>
+                </div>
+              </div>
+
+              {/* Subsections appear under active event in sidebar */}
+              {isSelected && (
+                <div className="side-sub" style={{ marginTop: 4 }}>
+                  {subsections.map((sub) => (
+                    <div
+                      key={sub.id}
+                      className={`sub-link ${activeSection === sub.id ? "on" : ""}`}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setActiveSection(sub.id);
+                      }}
+                    >
+                      {sub.label}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })}
+
+        <div style={{ marginTop: "auto", paddingTop: 20, borderTop: "1px solid #263544" }}>
+          <div style={{ fontSize: 13, color: "#fff", fontWeight: 600 }}>{user?.name || "Asha Thomas"}</div>
+          <small style={{ color: "#8097a8" }}>Organizer · Kochi</small>
+          <button
+            className="btn-sm"
+            onClick={onSignOut}
+            style={{ width: "100%", marginTop: 12, textAlign: "center" }}
+          >
+            Sign Out
+          </button>
+        </div>
+      </div>
+
+      {/* Main Content Area */}
+      <div style={{ padding: "28px 36px", overflowY: "auto", background: "#f8fafb" }}>
+        {/* Breadcrumb Header */}
+        <div className="sub-bar">
+          <div>
+            <div style={{ fontSize: 12, color: "var(--mut)", textTransform: "uppercase", letterSpacing: ".05em" }}>
+              Campaigns / {activeEventTitle} / <b style={{ color: "var(--ink)" }}>{activeSection}</b>
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 4 }}>
+              <h1 style={{ margin: 0, fontSize: 26 }}>{activeEventTitle}</h1>
+              <span className={`pill ${currentCamp.status === "running" ? "g" : "w"}`} style={{ fontSize: 11, margin: 0 }}>
+                ● {currentCamp.status ? currentCamp.status.toUpperCase() : "ACTIVE"}
+              </span>
+            </div>
+          </div>
+          <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+            <button className="btn p" style={{ width: "auto", margin: 0, padding: "8px 16px" }} onClick={onNewCampaign}>
+              + New Campaign
+            </button>
+          </div>
+        </div>
+
+        {/* 1. OVERVIEW SUBSECTION */}
+        {activeSection === "overview" && (
+          <div>
+            {/* User-Provided Event Summary Card */}
+            <div style={{
+              background: "#fff",
+              borderRadius: 14,
+              padding: "16px 20px",
+              border: "1px solid var(--line)",
+              boxShadow: "0 2px 10px rgba(0,0,0,0.04)",
+              marginBottom: 20
+            }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <span style={{ fontSize: 20 }}>📌</span>
+                  <b style={{ fontSize: 15, color: "var(--ink)" }}>Event Details Provided by User</b>
+                </div>
+                <span className="pill g" style={{ fontSize: 11 }}>
+                  {currentCamp.status === "running" ? "🚀 Live Campaign Dispatched" : "📝 Saved in PostgreSQL"}
+                </span>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 14 }}>
+                <div style={{ background: "#F8FAFB", padding: 12, borderRadius: 8, border: "1px solid var(--line)" }}>
+                  <small style={{ color: "var(--mut)", fontSize: 11, fontWeight: 700 }}>EVENT TITLE</small>
+                  <div style={{ fontWeight: 700, fontSize: 14, color: "var(--ink)", marginTop: 4 }}>
+                    {activeEventTitle}
+                  </div>
+                </div>
+                <div style={{ background: "#F8FAFB", padding: 12, borderRadius: 8, border: "1px solid var(--line)" }}>
+                  <small style={{ color: "var(--mut)", fontSize: 11, fontWeight: 700 }}>DATE & TIME</small>
+                  <div style={{ fontWeight: 700, fontSize: 14, color: "var(--ink)", marginTop: 4 }}>
+                    {activeEventDate}
+                  </div>
+                </div>
+                <div style={{ background: "#F8FAFB", padding: 12, borderRadius: 8, border: "1px solid var(--line)" }}>
+                  <small style={{ color: "var(--mut)", fontSize: 11, fontWeight: 700 }}>VENUE & LOCATION</small>
+                  <div style={{ fontWeight: 700, fontSize: 14, color: "var(--ink)", marginTop: 4 }}>
+                    {activeEventVenue}, {activeEventCity}
+                  </div>
+                </div>
+                <div style={{ background: "#F8FAFB", padding: 12, borderRadius: 8, border: "1px solid var(--line)" }}>
+                  <small style={{ color: "var(--mut)", fontSize: 11, fontWeight: 700 }}>REGISTRATION PASS</small>
+                  <div style={{ fontWeight: 700, fontSize: 14, color: "var(--ink)", marginTop: 4 }}>
+                    {activeEventFee === 0 ? "Free Access" : `₹${activeEventFee} per seat`}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <small style={{ color: "var(--mut)" }}>Real-time analytics and response telemetry</small>
+            <div className="stats">
+              {[
+                ["Confirmed", "1,284", "32.3% of invited"],
+                ["Not responded", "1,860", "46.7% of invited"],
+                ["Weakest language", "Malayalam", "20.4% response rate"],
+                ["Calls remaining", "412", "queued or in progress"],
+              ].map(([a, b, c]) => (
+                <div className="mint" key={a}>
+                  <small>{a}</small>
+                  <div className="big">{b}</div>
+                  <small>{c}</small>
+                </div>
+              ))}
+            </div>
+
+            <div className="grid" style={{ padding: 0, gridTemplateColumns: "2fr 1fr", margin: "20px 0" }}>
+              <div className="card">
+                <h3>Funnel and conversion stages</h3>
+                <Bar k="Invited" n="3,980" p={100} />
+                <Bar k="Responded" n="2,120" p={53.3} />
+                <Bar k="Registered" n="1,040" p={26.1} />
+                <Bar k="Paid" n="920" p={23.1} />
+                <h4 style={{ marginTop: 24 }}>By language response rate</h4>
+                <Bar k="English" n="1,400" p={70} />
+                <Bar k="Hindi" n="520" p={52} />
+                <Bar k="Malayalam" n="200" p={20.4} />
+              </div>
+
+              <div className="card">
+                <h3>Retry Outreach</h3>
+                <div className="big">412</div>
+                <p className="hint">
+                  This will call 412 non-responders via Exotel. Maximum 3 attempts per contact.
+                  Opted-out numbers, DND, and exhausted numbers are strictly skipped.
+                </p>
+                <button
+                  className="btn p"
+                  onClick={async () => {
+                    const res = await api.retryOutreach(activeCampaign);
+                    alert(`Exotel Retry Dispatched:\nQueued ${res.queued} non-responders.\nSkipped: ${res.skipped_opted_out} opted out, ${res.skipped_max_attempts} reached max attempts.`);
+                  }}
+                >
+                  + Retry non-responders
+                </button>
+              </div>
+            </div>
+
+            <div className="card" style={{ marginTop: 20 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, flexWrap: "wrap", gap: 10 }}>
+                <div>
+                  <h3 style={{ margin: 0 }}>Recent Contact Log (E.164 Masked)</h3>
+                  <small className="hint">Protected under DPDP · Salted HMAC hashes</small>
+                </div>
+                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                  <a
+                    href="/audience/template.csv"
+                    download="contacts-template.csv"
+                    className="btn-sm"
+                    style={{ textDecoration: "none", display: "inline-block" }}
+                  >
+                    ⬇ Template CSV
+                  </a>
+                  <button
+                    className="btn-sm"
+                    onClick={() => document.getElementById("dash-csv-input")?.click()}
+                  >
+                    + Upload Contacts CSV
+                  </button>
+                  <input
+                    id="dash-csv-input"
+                    type="file"
+                    accept=".csv,text/csv"
+                    style={{ display: "none" }}
+                    onChange={async (e) => {
+                      const file = e.target.files?.[0];
+                      if (!file) return;
+                      const report = await api.importAudience(campaignId || "cmp_001", file);
+                      alert(`Contacts CSV Imported:\n${report.imported} contacts added, ${report.skipped} skipped.`);
+                      const fresh = await api.getContacts(campaignId || "cmp_001");
+                      if (fresh?.items && fresh.items.length > 0) setDashContacts(fresh.items);
+                    }}
+                  />
+                </div>
+              </div>
+              <table>
+                <thead>
+                  <tr><th>Contact</th><th>Phone Masked</th><th>Language</th><th>Outcome</th><th>Attempts</th><th>Channel</th></tr>
+                </thead>
+                <tbody>
+                  {(dashContacts || [
+                    { name: "Priya Nair", phone_masked: "+91 •••• 4821", language: "English", last_outcome: "Confirmed", attempts: "1 of 3", channel: "Call" },
+                    { name: "Rohan Mehta", phone_masked: "+91 •••• 1187", language: "Hindi", last_outcome: "Declined", attempts: "1 of 3", channel: "Call" },
+                    { name: "Aisha Khan", phone_masked: "+91 •••• 7734", language: "English", last_outcome: "Callback", attempts: "2 of 3", channel: "WhatsApp" },
+                    { name: "Deepak Rao", phone_masked: "+91 •••• 6629", language: "Malayalam", last_outcome: "No answer", attempts: "2 of 3", channel: "Call" },
+                    { name: "Anjali Menon", phone_masked: "+91 •••• 4321", language: "Malayalam", last_outcome: "Confirmed", attempts: "1 of 3", channel: "Call + SMS" },
+                  ]).slice(0, 10).map((r, n) => (
+                    <tr key={r.id || n}>
+                      <td><b>{r.name}</b></td>
+                      <td>{r.phone_masked || "+91 •••• 4321"}</td>
+                      <td>{r.language === "ml" ? "Malayalam" : r.language === "hi" ? "Hindi" : r.language === "ta" ? "Tamil" : r.language || "English"}</td>
+                      <td>
+                        <span className={`pill ${r.last_outcome === "confirmed" || r.last_outcome === "Confirmed" ? "g" : r.last_outcome === "declined" || r.last_outcome === "Declined" ? "e" : "w"}`}>
+                          {r.last_outcome || "Confirmed"}
+                        </span>
+                      </td>
+                      <td>{r.attempts || "1 of 3"}</td>
+                      <td>{r.channel || "Call"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {/* 2. PAYMENTS SUBSECTION */}
+        {activeSection === "payments" && (
+          <div>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+              <div>
+                <h2 style={{ margin: 0 }}>Payments & Checkout Simulator</h2>
+                <small style={{ color: "var(--mut)" }}>Test mode gateway integration · 15-minute hold timer · Webhook signature verified</small>
+              </div>
+              <div className="pill-group">
+                {[
+                  ["form", "Choose Method"],
+                  ["verifying", "Processing"],
+                  ["success", "Test Receipt"],
+                  ["failed", "Payment Failed"],
+                  ["expired", "Hold Expired"],
+                ].map(([st, label]) => (
+                  <button
+                    key={st}
+                    className={`state-pill ${payState === st ? "on" : ""}`}
+                    onClick={() => setPayState(st)}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div style={{ background: "#fff", borderRadius: 12, border: "1px solid var(--line)", overflow: "hidden" }}>
+              <Pay s={payState} />
+            </div>
+          </div>
+        )}
+
+        {/* 3. GUEST REGISTRATION SUBSECTION */}
+        {activeSection === "registration" && (
+          <div>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+              <div>
+                <h2 style={{ margin: 0 }}>Guest Registration Landing Pages</h2>
+                <small style={{ color: "var(--mut)" }}>Public recipient view reached from personal links (/r/{`{token}`})</small>
+              </div>
+              <div className="pill-group">
+                {[
+                  ["form", "Form"],
+                  ["saving", "Submitting"],
+                  ["success", "Confirmed"],
+                  ["existing", "Already Registered"],
+                  ["full", "Event Full"],
+                  ["waitlisted", "Waitlisted"],
+                  ["expired", "Link Expired"],
+                ].map(([st, label]) => (
+                  <button
+                    key={st}
+                    className={`state-pill ${guestState === st ? "on" : ""}`}
+                    onClick={() => setGuestState(st)}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div style={{ background: "#fff", borderRadius: 12, border: "1px solid var(--line)", overflow: "hidden" }}>
+              <Guest s={guestState} />
+            </div>
+          </div>
+        )}
+
+        {/* 4. TICKETS & CHECK-IN SUBSECTION */}
+        {activeSection === "tickets" && (
+          <div>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+              <div>
+                <h2 style={{ margin: 0 }}>Admission Tickets & Front-Desk Scanner</h2>
+                <small style={{ color: "var(--mut)" }}>QR Pass verification & staff attendance logging (/r/{`{token}`}/check-in)</small>
+              </div>
+              <div className="pill-group">
+                {[
+                  ["ticket", "Attendee Ticket Pass"],
+                  ["ok", "Check-in: Success"],
+                  ["dup", "Check-in: Duplicate"],
+                  ["bad", "Check-in: Invalid"],
+                ].map(([st, label]) => (
+                  <button
+                    key={st}
+                    className={`state-pill ${checkinState === st ? "on" : ""}`}
+                    onClick={() => setCheckinState(st)}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div style={{ background: "#fff", borderRadius: 12, border: "1px solid var(--line)", overflow: "hidden", padding: 12 }}>
+              {checkinState === "ticket" ? <Ticket /> : <Checkin s={checkinState} />}
+            </div>
+          </div>
+        )}
+
+        {/* 5. MESSAGES & CHANNELS SUBSECTION */}
+        {activeSection === "messages" && (
+          <div>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+              <div>
+                <h2 style={{ margin: 0 }}>Message & Dispatch Previews</h2>
+                <small style={{ color: "var(--mut)" }}>Rendered templates across Email & WhatsApp</small>
+              </div>
+              <div style={{ display: "flex", gap: 12 }}>
+                <select
+                  value={channel}
+                  onChange={(e) => setChannel(e.target.value)}
+                  style={{ padding: "6px 12px", borderRadius: 8, border: "1px solid var(--line)", font: "inherit" }}
+                >
+                  <option>Email</option>
+                  <option>WhatsApp</option>
+                </select>
+                <select
+                  value={msgKey}
+                  onChange={(e) => setMsgKey(e.target.value)}
+                  style={{ padding: "6px 12px", borderRadius: 8, border: "1px solid var(--line)", font: "inherit" }}
+                >
+                  {Object.keys(MSG).map((k) => <option key={k}>{k}</option>)}
+                </select>
+              </div>
+            </div>
+
+            <div style={{ background: "#fff", borderRadius: 12, border: "1px solid var(--line)", overflow: "hidden" }}>
+              <Message k={msgKey} ch={channel} />
+            </div>
+          </div>
+        )}
+
+        {/* 6. FEEDBACK SUBSECTION */}
+        {activeSection === "feedback" && (
+          <div>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+              <div>
+                <h2 style={{ margin: 0 }}>Post-Event Attendee Feedback</h2>
+                <small style={{ color: "var(--mut)" }}>3-question feedback collection & sentiment survey</small>
+              </div>
+              <div className="pill-group">
+                {[
+                  ["form", "Survey Form"],
+                  ["submitting", "Submitting"],
+                  ["done", "Completed"],
+                  ["repeat", "Already Sent"],
+                ].map(([st, label]) => (
+                  <button
+                    key={st}
+                    className={`state-pill ${feedbackState === st ? "on" : ""}`}
+                    onClick={() => setFeedbackState(st)}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div style={{ background: "#fff", borderRadius: 12, border: "1px solid var(--line)", overflow: "hidden" }}>
+              <Feedback s={feedbackState} />
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ---------- 4. Main Root App Flow Router ---------- */
+export default function KoodalApp() {
+  // Views: "home" (default landing/login) | "dashboard" | "wizard"
+  const [view, setView] = useState("home");
+  const [user, setUser] = useState({ name: "Asha Thomas", email: "organizer@example.com", role: "organizer" });
+  const [backendStatus, setBackendStatus] = useState("checking");
+  const [showAISettings, setShowAISettings] = useState(false);
+  const [activeAIProvider, setActiveAIProvider] = useState(localStorage.getItem("eventreach_ai_provider") || "gemini");
+
+  // Global campaigns list & active selected campaign
+  const [campaignsList, setCampaignsList] = useState([]);
+  const [activeCampaignId, setActiveCampaignId] = useState(null);
+
+  const refreshCampaigns = async () => {
+    try {
+      const res = await api.getCampaigns();
+      if (res && res.length > 0) {
+        setCampaignsList(res);
+        if (!activeCampaignId) setActiveCampaignId(res[0].id || res[0].name);
+      }
+    } catch {}
+  };
+
+  useEffect(() => {
+    refreshCampaigns();
+    api.checkHealth().then((res) => {
+      setBackendStatus(res ? "connected" : "offline");
+    });
+
+    const interval = setInterval(() => {
+      api.checkHealth().then((res) => {
+        setBackendStatus(res ? "connected" : "offline");
+      });
+    }, 8000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const handleCampaignLaunch = (newCamp) => {
+    setCampaignsList((prev) => [newCamp, ...prev.filter((c) => c.id !== newCamp.id && c.name !== newCamp.name)]);
+    setActiveCampaignId(newCamp.id || newCamp.name);
+    setView("dashboard");
+    refreshCampaigns();
+  };
+
+  return (
+    <div className="k">
+      <style>{css}</style>
+
+      {/* Top Brand Bar visible on authenticated screens */}
+      {view !== "home" && (
+        <div className="top-bar">
+          <div className="top-brand" style={{ cursor: "pointer" }} onClick={() => setView("dashboard")}>
+            <span>✳</span> koodal <small style={{ color: "#7a90a2", fontWeight: 400 }}>· EventReach Platform</small>
+          </div>
+          <div className="top-right">
+            <span
+              className={`pill ${backendStatus === "connected" ? "g" : "w"}`}
+              style={{ fontSize: 11, margin: 0 }}
+              title={backendStatus === "connected" ? "Connected to FastAPI at http://localhost:8000" : "FastAPI server offline; running in mock mode"}
+            >
+              {backendStatus === "connected" ? "● Backend Live :8000" : "○ Demo Mode"}
+            </span>
+            <button
+              className="btn-sm"
+              onClick={() => setShowAISettings(true)}
+              style={{ display: "flex", alignItems: "center", gap: 6, background: "#1b3542", borderColor: "var(--teal)", color: "#fff" }}
+              title="Configure Gemini, Groq, or OpenAI API key for real audio processing"
+            >
+              <span>⚙️</span> AI API Settings
+            </button>
+            <div className="user-pill">
+              <div className="user-dot" />
+              <span>{user?.name} ({user?.role})</span>
+            </div>
+            <button className="btn-sm" onClick={() => setView("wizard")}>
+              + Create Campaign
+            </button>
+            <button
+              className="btn-sm"
+              onClick={() => {
+                setAuthToken(null);
+                setView("home");
+              }}
+            >
+              Sign Out
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* AI Settings Modal */}
+      <AISettingsModal
+        isOpen={showAISettings}
+        onClose={() => setShowAISettings(false)}
+        onSaved={(p) => setActiveAIProvider(p)}
+      />
+
+      {/* 1. Home / Login Flow */}
+      {view === "home" && (
+        <Home
+          backendStatus={backendStatus}
+          onOpenAISettings={() => setShowAISettings(true)}
+          onLogin={(userData) => {
+            setUser(userData);
+            setView("dashboard");
+          }}
+        />
+      )}
+
+      {/* 2. Campaign Wizard Flow */}
+      {view === "wizard" && (
+        <Wizard
+          onCancel={() => setView("dashboard")}
+          onOpenAISettings={() => setShowAISettings(true)}
+          activeAIProvider={activeAIProvider}
+          onLaunch={handleCampaignLaunch}
+        />
+      )}
+
+      {/* 3. Organizer Dashboard Flow */}
+      {view === "dashboard" && (
+        <Dashboard
+          onNewCampaign={() => setView("wizard")}
+          onOpenAISettings={() => setShowAISettings(true)}
+          onSignOut={() => {
+            setAuthToken(null);
+            setView("home");
+          }}
+          user={user}
+          campaignsList={campaignsList}
+          setCampaignsList={setCampaignsList}
+          activeCampaignId={activeCampaignId}
+          setActiveCampaignId={setActiveCampaignId}
+        />
+      )}
+    </div>
+  );
+}

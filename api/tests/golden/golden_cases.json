@@ -1,0 +1,194 @@
+[
+  {
+    "id": "case_01_en_clean",
+    "transcript": "We are holding an AI in Healthcare seminar on the fourteenth of November at ten in the morning, in the Seminar Hall, Block A, in Kochi. Registration is five hundred rupees.",
+    "poster_text": null,
+    "language": "en",
+    "expected": {
+      "title": "AI in Healthcare Seminar",
+      "city": "Kochi",
+      "venue": "Seminar Hall, Block A",
+      "fee_inr": 500
+    }
+  },
+  {
+    "id": "case_02_hi_clean",
+    "transcript": "हम 14 नवंबर को सुबह 10 बजे हॉल ए कोच्चि में एआई कार्यशाला आयोजित कर रहे हैं। पंजीकरण शुल्क 500 रुपये है।",
+    "poster_text": null,
+    "language": "hi",
+    "expected": {
+      "title": "AI in Healthcare Seminar",
+      "city": "Kochi",
+      "fee_inr": 500
+    }
+  },
+  {
+    "id": "case_03_ml_clean",
+    "transcript": "ഞങ്ങൾ നാളെ രാവിലെ 10 മണിക്ക് കൊച്ചി സെമിനാർ ഹാളിൽ കാർഡിയോളജി സമ്മേളനം നടത്തുന്നു.",
+    "poster_text": null,
+    "language": "ml",
+    "expected": {
+      "city": "Kochi"
+    }
+  },
+  {
+    "id": "case_04_ta_clean",
+    "transcript": "நாளை காலை 10 மணிக்கு சென்னையில் சிறப்பு கருத்தரங்கு நடைபெறுகிறது.",
+    "poster_text": null,
+    "language": "ta",
+    "expected": {
+      "city": "Chennai"
+    }
+  },
+  {
+    "id": "case_05_code_mixed_hinglish",
+    "transcript": "We are hosting DEFINE 2026 conference next Saturday in Seminar Hall Kochi, registration fee is 500 rupees.",
+    "poster_text": null,
+    "language": "en",
+    "expected": {
+      "title": "DEFINE 2026",
+      "city": "Kochi",
+      "fee_inr": 500
+    }
+  },
+  {
+    "id": "case_06_code_mixed_manglish",
+    "transcript": "Join us for Cardiology Summit tomorrow at Medical College Hall Kochi, entry is free.",
+    "poster_text": null,
+    "language": "en",
+    "expected": {
+      "city": "Kochi",
+      "fee_inr": 0
+    }
+  },
+  {
+    "id": "case_07_code_mixed_tanglish",
+    "transcript": "Tech Spark event on Friday at Anna Auditorium Chennai, registration 100 rupees.",
+    "poster_text": null,
+    "language": "en",
+    "expected": {
+      "city": "Chennai",
+      "fee_inr": 100
+    }
+  },
+  {
+    "id": "case_08_missing_fee",
+    "transcript": "We are holding an AI in Healthcare seminar on November 14th in Seminar Hall Kochi.",
+    "poster_text": null,
+    "language": "en",
+    "expected": {
+      "title": "AI in Healthcare Seminar",
+      "city": "Kochi",
+      "fee_inr": 0
+    }
+  },
+  {
+    "id": "case_09_missing_capacity",
+    "transcript": "We are conducting a clinic awareness session on November 14th at 10 AM in Kochi.",
+    "poster_text": null,
+    "language": "en",
+    "expected": {
+      "capacity": null
+    }
+  },
+  {
+    "id": "case_10_conflicting_date",
+    "transcript": "We are holding the seminar on fourteenth of November at 10 AM in Seminar Hall Kochi.",
+    "poster_text": "Event: AI Seminar\nDate: 15 November 2026\nVenue: Seminar Hall Kochi",
+    "language": "en",
+    "expected": {
+      "conflict_key": "conflict:date"
+    }
+  },
+  {
+    "id": "case_11_conflicting_fee",
+    "transcript": "Join us for DEFINE 2026, registration fee is 500 rupees.",
+    "poster_text": "DEFINE 2026\nDate: 14 Nov 2026\nFee: Free",
+    "language": "en",
+    "expected": {
+      "conflict_key": "conflict:fee"
+    }
+  },
+  {
+    "id": "case_12_relative_date_tomorrow",
+    "transcript": "The medical clinic workshop is happening tomorrow at 10 AM in Kochi.",
+    "poster_text": null,
+    "language": "en",
+    "expected": {
+      "city": "Kochi"
+    }
+  },
+  {
+    "id": "case_13_relative_date_next_saturday",
+    "transcript": "We invite you to DEFINE 4.0 scheduled for next Saturday at 10 in the morning.",
+    "poster_text": null,
+    "language": "en",
+    "expected": {
+      "title": "DEFINE 4.0"
+    }
+  },
+  {
+    "id": "case_14_spoken_numbers_fee",
+    "transcript": "Healthcare summit in Kochi on November 14, fee is five hundred rupees.",
+    "poster_text": null,
+    "language": "en",
+    "expected": {
+      "fee_inr": 500
+    }
+  },
+  {
+    "id": "case_15_spoken_numbers_date",
+    "transcript": "Meeting scheduled on the fourteenth of November at Seminar Hall Kochi.",
+    "poster_text": null,
+    "language": "en",
+    "expected": {
+      "city": "Kochi"
+    }
+  },
+  {
+    "id": "case_16_names_with_initials",
+    "transcript": "The conference will be held at Dr. A. P. J. Abdul Kalam Auditorium in Kochi.",
+    "poster_text": null,
+    "language": "en",
+    "expected": {
+      "city": "Kochi"
+    }
+  },
+  {
+    "id": "case_17_noisy_transcript",
+    "transcript": "um hello yeah we are hosting DEFINE 4.0 event uh on November 14th in Hall B Kochi",
+    "poster_text": null,
+    "language": "en",
+    "expected": {
+      "title": "DEFINE 4.0",
+      "city": "Kochi"
+    }
+  },
+  {
+    "id": "case_18_all_fields_null",
+    "transcript": "Hello testing one two three voice note audio check.",
+    "poster_text": null,
+    "language": "en",
+    "expected": {
+      "is_valid_draft": true
+    }
+  },
+  {
+    "id": "case_19_past_date",
+    "transcript": "Seminar was scheduled on 10 October 2025 at Seminar Hall Kochi.",
+    "poster_text": null,
+    "language": "en",
+    "expected": {
+      "review_flag": "starts_at"
+    }
+  },
+  {
+    "id": "case_20_ambiguous_time",
+    "transcript": "Meeting on 14 November at 4 in Seminar Hall Kochi.",
+    "poster_text": null,
+    "language": "en",
+    "expected": {
+      "review_flag": "starts_at"
+    }
+  }
+]

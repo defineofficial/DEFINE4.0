@@ -1,0 +1,197 @@
+﻿=== vite.config.js
+import react from '@vitejs/plugin-react'
+import { defineConfig } from 'vite'
+
+// https://vite.dev/config/
+export default defineConfig({
+  plugins: [react()],
+  server: {
+    port: 5173,
+    proxy: {
+      '/auth': 'http://127.0.0.1:8000',
+      '/me': 'http://127.0.0.1:8000',
+      '/campaigns': 'http://127.0.0.1:8000',
+      '/templates': 'http://127.0.0.1:8000',
+      '/audience': 'http://127.0.0.1:8000',
+      '/contacts': 'http://127.0.0.1:8000',
+      '/r/': 'http://127.0.0.1:8000',
+      '/s/': 'http://127.0.0.1:8000',
+      '/health': 'http://127.0.0.1:8000',
+      '/webhooks': 'http://127.0.0.1:8000',
+      '/files': 'http://127.0.0.1:8000',
+      '/settings': 'http://127.0.0.1:8000',
+    },
+  },
+})
+
+=== lines 151-180
+const reg = (rest) => (
+  <div className="card">{rest}</div>
+);
+function Guest({ s }) {
+  const full = s === "full", saving = s === "saving", bad = s === "error";
+  const summary = (title, intro, banner, pill) => reg(<>
+    <h2>{title}</h2><p>{intro}</p>{banner}<span className="pill g">âœ“ REGISTERED</span><span className="pill w">! PAYMENT PENDING</span>
+    <Row k="Guest name" v="Anjali Menon" /><Row k="Phone number" v="+91 â€¢â€¢â€¢â€¢â€¢â€¢ 4321" /><Row k="Email address" v="anjali.menon@example.org" />
+    <Row k="Seats and language" v="1 seat Â· English" /><Row k="Date and time" v="Fri 23 Oct 2026, 10:00 AM to 4:00 PM IST" />
+    <Row k="Venue" v="Grand Hall, Kochi" /><Row k="Registration ID" v="KDL-DEF-2026-004321" />
+    <div className="mint" style={{ marginTop: 14 }}>1 seat Ã— â‚¹500 <b style={{ float: "right" }}>Payable â‚¹500</b><div className="hint">Payment has not been received.</div></div>
+    <p className="hint">Your registration is saved. Complete the â‚¹500 payment separately; this summary is not proof of payment.</p>
+    <button className="btn p">Pay now â‚¹500</button>{pill}</>);
+
+  if (s === "success") return <Page left={<Invite />} right={summary("You're registered, Anjali", "We look forward to welcoming you to Define. Keep this summary for your records.",
+    <Alert t="g" title="Your registration is confirmed">1 seat registered for Define. The â‚¹500 payment is still pending.</Alert>, <button className="btn">Add to calendar</button>)} />;
+  if (s === "existing") return <Page left={<Invite />} right={summary("You're already on the list", "Welcome back, Anjali. We found your existing registration; there's no need to register again.",
+    <Alert t="g" title="Your existing registration is safe">The same 1-seat registration is shown below. Payment is still pending.</Alert>, <button className="btn">View registration</button>)} />;
+  if (s === "expired") return <Page left={<Invite />} right={reg(<>
+    <h2>This personal link has expired</h2><p>For your privacy, guest details are hidden. You can request a fresh invitation from Koodal Events.</p>
+    <Alert t="w" title="A new link is needed">This link can no longer be used to register for Define.</Alert>
+    <button className="btn p">Request a new link</button><div className="hint">If you no longer have access to that number, contact Koodal Events using the number in your original SMS.</div></>)} />;
+  if (s === "waitlisted") return <Page left={<Invite />} right={reg(<>
+    <h2>You're on the waitlist, Anjali</h2><p>We've received your request for one seat.</p><span className="pill g">âœ“ On the waitlist</span>
+    <div className="mint" style={{ margin: "14px 0" }}>Your queue position:<div className="big">12</div><b>1 seat requested</b><div className="hint">Example queue position Â· not a verified live position.</div></div>
+    <Alert t="g" title="Your waitlist request is received">No charge has been made. Joining is not a registration and does not guarantee a seat.</Alert>
+    <Row k="Waitlist reference" v="WL-DEF-004321" /><h3>What happens next</h3>
+    <p style={{ fontSize: 14 }}><b>Watch for your offer.</b> We'll send a personal seat offer by email or WhatsApp.<br /><b>Claim within 30 minutes.</b> The window starts when the offer is issued.<br /><b>Confirm and pay after claiming.</b></p>
+    <button className="btn p">View waitlist status</button></>)} />;
+  if (s === "offer-expired") return <Page left={<Invite />} right={reg(<>
+=== lines 221-245
+        <div className="hint">Order ORD-DEF-2026-004322</div>
+        <span className={`pill ${done ? "g" : gone ? "e" : "w"}`}>{done ? "âœ“ 2 seats secured Â· test result" : gone ? "Ã— 2 seats released" : "! Payment pending"}</span>
+        <Row k="Seats" v="2 Ã— â‚¹500 each" /><Row k="Subtotal" v="â‚¹1,000" /><Row k="Taxes" v="â‚¹0" />
+        <div className="mint" style={{ marginTop: 12 }}><b>Total</b><b style={{ float: "right", fontSize: 22 }}>â‚¹1,000</b></div>
+        <p><b>Anjali Menon</b><br />anjali.menon@example.org</p>
+        {!done && <div className="mint"><b>{gone ? "Seat hold expired" : "Your seats are on hold"}</b><b style={{ float: "right", fontSize: 22 }}>{gone ? "00:00" : s === "failed" ? "11:48" : "12:34"}</b>
+          <div className="hint">Unpaid seats are held for 15 minutes from registration. Changing methods or retrying does not restart the hold.</div></div>}</div>
+      <div className="card">
+        {gone ? <><h2>Start a new registration</h2><Alert t="e" title="2 seats released">The original 15-minute reservation has ended. No money was charged in test mode.</Alert>
+          <p>Register again to check current availability. Seats are not guaranteed.</p><button className="btn p">Register again</button></>
+          : done ? <><h2>Your test receipt</h2><Alert t="g" title="Test payment successful">2 seats secured Â· test result. No money was charged.</Alert>
+            <Row k="Receipt" v="RCPT-DEF-2026-004322" /><Row k="Order" v="ORD-DEF-2026-004322" /><Row k="Method" v="Card Â· test card ending 4242" /><Row k="Demo reference" v="TEST-PAY-DEF-004322" />
+            <button className="btn">Download receipt</button></>
+            : <><h2>{s === "failed" ? "Try your payment again" : s === "verifying" ? "Card payment in progress" : "Choose how to pay"}</h2>
+              {s === "failed" && <Alert t="e" title="Payment cancelled">Payment was cancelled before authorization.</Alert>}
+              <div className="tabs">{["UPI", "Card", "Netbanking"].map(x => <span key={x} className={m === x ? "on" : ""} onClick={() => s !== "verifying" && setM(x)} style={{ cursor: "pointer" }}>{m === x && "âœ“ "}{x}</span>)}</div>
+              {m === "UPI" && <Field label="UPI ID" defaultValue="anjali@testbank" hint="Test example only. Enter a test UPI ID in name@bank format." />}
+              {m === "Card" && <><Field label="Card number" value="â€¢â€¢â€¢â€¢ â€¢â€¢â€¢â€¢ â€¢â€¢â€¢â€¢ 4242" readOnly hint="Synthetic test card Â· not a real card" /><Field label="Expiry" value="12/28" readOnly /></>}
+              {m === "Netbanking" && <div className="f"><label>Bank</label><select><option>Demo Bank</option></select><div className="hint">Generic test bank only; no live bank connection.</div></div>}
+              {s === "verifying" && <Alert t="w" title="Verification is pending">Do not retry or switch methods while we check the result. No real money will be charged.</Alert>}
+              <button className="btn p" disabled={s === "verifying"}>{s === "verifying" ? "Processing paymentâ€¦" : s === "failed" ? "Try again" : "Pay â‚¹1,000"}</button>
+              <div className="hint">This is a simulated checkout, not a live payment gateway. No real money will be charged.</div></>}
+      </div></div></>);
+}
+
+=== lines 253-272
+function Checkin({ s }) {
+  const R = { ok: ["g", "Checked in", "Guest check-in recorded", "Welcome Anjali and her guest to Define."], dup: ["w", "Already checked in", "No additional check-in recorded.", "This ticket has already been used. Do not admit the same seats again."], bad: ["e", "Invalid code", "Ticket not found", "This code does not match a ticket for Define. Try scanning again or search for the guest."] }[s];
+  return (<><Hdr right={<span>Staff check-in Â· Front desk</span>} />
+    <div className="grid"><div><h2>Scan a ticket</h2><div className="scan">Position the QR code within the guide</div>
+      <Field label="Search by guest name or ticket ID" defaultValue={s === "bad" ? "KDL-UNKNOWN-009999" : "KDL-DEF-004322"} err={s === "bad" && "No matching ticket. Check the ID or search by name."} hint="Search still requires a valid, eligible ticket for this event." /><button className="btn p">Search</button></div>
+      <div className="card"><small>TICKET RESULT Â· DEMO</small><h2 style={{ color: `var(--${R[0] === "g" ? "grn" : R[0] === "w" ? "amb" : "red"})` }}>{R[1]}</h2>
+        {s !== "bad" && <div className="mint"><b>Anjali Menon</b><br />KDL-DEF-004322 Â· 2 seats {s === "ok" ? "admitted" : "Â· original admission"}</div>}
+        <Alert t={R[0]} title={R[2]}>{R[3]}</Alert>
+        {s !== "bad" && <><Row k={s === "ok" ? "First check-in" : "Original check-in"} v="10:06 AM IST" />{s === "dup" && <Row k="Seen again" v="10:12 AM IST" />}</>}
+        <button className="btn p">Scan next ticket</button></div></div></>);
+}
+
+/* ---------- feedback ---------- */
+function Feedback({ s }) {
+  const [r, setR] = useState(s === "form" ? 0 : 4);
+  const stars = (n) => [1, 2, 3, 4, 5].map(i => <button key={i} className="btn" disabled={s !== "form"} onClick={() => setR(i)} style={{ width: 54, display: "inline-block", margin: 3, color: i <= n ? "var(--teal)" : "var(--mut)" }}>{i <= n ? "â˜…" : "â˜†"}</button>);
+  const done = s !== "form" && s !== "submitting";
+  return (<Page hdr={<Lang />} hero={false}
+    left={<><small>EVENT FEEDBACK</small><h1>Good gatherings start with listening.</h1><p>Thank you for being part of Define. Your perspective helps us shape what comes next.</p></>}
+    right={<div className="card">
+=== lines 2261-2305
+                  + Retry non-responders
+                </button>
+              </div>
+            </div>
+
+            <div className="card" style={{ marginTop: 20 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, flexWrap: "wrap", gap: 10 }}>
+                <div>
+                  <h3 style={{ margin: 0 }}>Recent Contact Log (E.164 Masked)</h3>
+                  <small className="hint">Protected under DPDP Â· Salted HMAC hashes</small>
+                </div>
+                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                  <a
+                    href="/audience/template.csv"
+                    download="contacts-template.csv"
+                    className="btn-sm"
+                    style={{ textDecoration: "none", display: "inline-block" }}
+                  >
+                    â¬‡ Template CSV
+                  </a>
+                  <button
+                    className="btn-sm"
+                    onClick={() => document.getElementById("dash-csv-input")?.click()}
+                  >
+                    + Upload Contacts CSV
+                  </button>
+                  <input
+                    id="dash-csv-input"
+                    type="file"
+                    accept=".csv,text/csv"
+                    style={{ display: "none" }}
+                    onChange={async (e) => {
+                      const file = e.target.files?.[0];
+                      if (!file) return;
+                      const report = await api.importAudience(campaignId || "cmp_001", file);
+                      alert(`Contacts CSV Imported:\n${report.imported} contacts added, ${report.skipped} skipped.`);
+                      const fresh = await api.getContacts(campaignId || "cmp_001");
+                      if (fresh?.items && fresh.items.length > 0) setDashContacts(fresh.items);
+                    }}
+                  />
+                </div>
+              </div>
+              <table>
+                <thead>
+                  <tr><th>Contact</th><th>Phone Masked</th><th>Language</th><th>Outcome</th><th>Attempts</th><th>Channel</th></tr>
+=== lines 2556-2600
+          </div>
+          <div className="top-right">
+            <span
+              className={`pill ${backendStatus === "connected" ? "g" : "w"}`}
+              style={{ fontSize: 11, margin: 0 }}
+              title={backendStatus === "connected" ? "Connected to FastAPI at http://localhost:8000" : "FastAPI server offline; running in mock mode"}
+            >
+              {backendStatus === "connected" ? "â— Backend Live :8000" : "â—‹ Demo Mode"}
+            </span>
+            <button
+              className="btn-sm"
+              onClick={() => setShowAISettings(true)}
+              style={{ display: "flex", alignItems: "center", gap: 6, background: "#1b3542", borderColor: "var(--teal)", color: "#fff" }}
+              title="Configure Gemini, Groq, or OpenAI API key for real audio processing"
+            >
+              <span>âš™ï¸</span> AI API Settings
+            </button>
+            <div className="user-pill">
+              <div className="user-dot" />
+              <span>{user?.name} ({user?.role})</span>
+            </div>
+            <button className="btn-sm" onClick={() => setView("wizard")}>
+              + Create Campaign
+            </button>
+            <button
+              className="btn-sm"
+              onClick={() => {
+                setAuthToken(null);
+                setView("home");
+              }}
+            >
+              Sign Out
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* AI Settings Modal */}
+      <AISettingsModal
+        isOpen={showAISettings}
+        onClose={() => setShowAISettings(false)}
+        onSaved={(p) => setActiveAIProvider(p)}
+      />
+
+      {/* 1. Home / Login Flow */}
+=== API calls
